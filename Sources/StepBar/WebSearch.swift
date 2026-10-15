@@ -76,7 +76,8 @@ enum WebSearch {
     }
     // http(s) links written in snippet text, with a path (a bare home page says little), cleaned like any other URL.
     static func links(in text: String) -> [String] {
-        let pattern = "https?://[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/[A-Za-z0-9._~/%-]+"
+        // Require a delimiter after the address: snippets can end halfway through a URL.
+        let pattern = "https?://[A-Za-z0-9.-]+\\.[A-Za-z]{2,}/[A-Za-z0-9._~/%-]+(?=[\\s，。；、）)\\\"<>])"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { match in
             guard let range = Range(match.range, in: text) else { return nil }

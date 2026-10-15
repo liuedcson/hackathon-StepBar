@@ -220,10 +220,11 @@ extension InferenceTests {
         XCTAssertEqual(cleaned[0].time, "2026-09-21")
         XCTAssertEqual(WebSearch.items(cleaned).first?.content.hasPrefix("开源"), true)
         let report = WebResult(title: "月之暗面开源Kimi Code", url: "https://m.sohu.com/a/1", snippet: "开源地址：https://github.com/MoonshotAI/kimi-code 咱们接着聊，见 https://example.com 和 https://a.example/x?token=1。", time: nil)
-        XCTAssertEqual(WebSearch.links(in: report.snippet), ["https://github.com/MoonshotAI/kimi-code", "https://a.example/x"])
+        XCTAssertEqual(WebSearch.links(in: report.snippet), ["https://github.com/MoonshotAI/kimi-code"])
         let quoted = WebSearch.items([report])
-        XCTAssertEqual(quoted.map { $0.url ?? "" }, ["https://github.com/MoonshotAI/kimi-code", "https://a.example/x", "https://m.sohu.com/a/1"])
+        XCTAssertEqual(quoted.map { $0.url ?? "" }, ["https://github.com/MoonshotAI/kimi-code", "https://m.sohu.com/a/1"])
         XCTAssertEqual(quoted[0].title.contains("中提到"), true)
+        XCTAssertEqual(WebSearch.links(in: "地址 https://github.com/example/truncated"), [])
 
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockProtocol.self]
