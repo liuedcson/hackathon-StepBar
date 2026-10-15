@@ -1,0 +1,333 @@
+import AppKit
+import SwiftUI
+
+@MainActor final class Store: ObservableObject {
+    @Published var memory = Memory()
+    @Published var settings = Settings()
+    @Published var paused = false
+    @Published var status = "准备就绪"
+    @Published var aiStatus = "AI 未启用 · 本地规则"
+    @Published var bridgeStatus = "等待 Chrome 扩展连接"
+    @Published var testingAI = false
+    @Published var launcherModel = ""
+    @Published var browserTabs: [BrowserTab] = []
+    @Published var query = "" {
+        didSet {
+            // Large pastes: keep one line and a bounded length so typing stays responsive.
+            if query.count > 400 || query.contains(where: \.isNewline) {
+                query = String(query.prefix(400)).replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+            }
+            if query != oldValue { queryChanged() }
+        }
+    }
+    @Published var results: [SearchItem] = []
+    @Published var selection = 0
+    @Published var thinking = false
+    @Published var generating = false
+    @Published var intent: String?
+    @Published var focusRequest = 0
+    @Published var listening = false
+    @Published var diagnosticTab = "notes"
+    @Published var backgroundStatus = "后台：等待空闲"
+    var history: [SearchItem] = []
+    var searchPages: [SearchItem] = []
+    var siteSearches: [Recipe] = []
+    var historyAt = Date.distantPast
+    var pages: [String: PageText] = [:]
+    var pagesDirty = false
+    // Layer 2 results for the current query, computed off the main thread.
+    var semanticHits: [SearchItem] = []
+    // StepFun web search context for the current query, given to layer 3 and cached per query.
+    var webHits: [SearchItem] = []
+    var webCache: [String: [WebResult]] = [:]
+    var aiPicks: [String: Double] = [:]
+    var aiActions: [SearchItem] = []
+    var aiCandidates: [SearchItem] = []
+    var searchGeneration = 0
+    // The Chrome tab in front when the hotkey was pressed.
+    var currentPage: BrowserTab?
+    var browserUpdated = Date.distantPast
+    var launcherOpen = false
+    var budget = Budget()
+    var pendingSave = false
+    let voice = VoiceInput()
+    let bridge = BrowserBridge()
+    let ai = AIClient()
+    private var timer: Timer?
+    private var pasteCount = NSPasteboard.general.changeCount
+    @Published private var clipText: String?
+    private var clipDate = Date.distantPast
+    // A copied id waiting to show up in the address of the next page opened: that is a query entry to learn.
+    private var copied: (value: String, date: Date)?
+    private var lastActiveURL: String?
+    private var savedAt = Date.distantPast
+    private var jobsAt = Date().addingTimeInterval(-45)
+    private var jobTask: Task<Void, Never>?
+    var pendingJumps: [UUID: SearchItem] = [:]
+    let path: URL
+    let settingsPath: URL
+    let pagesPath: URL
+
+    init() {
+        let folder = Settings.folder
+        path = folder.appendingPathComponent("memory.json")
+        settingsPath = folder.appendingPathComponent("settings.json")
+        pagesPath = folder.appendingPathComponent("pages.json")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        pages = PageIndex.load(pagesPath)
+        if let data = try? Data(contentsOf: path) {
+            do { memory = try JSONDecoder().decode(Memory.self, from: data) }
+            catch { status = "记忆文件无法读取，已保留原文件。" }
+        }
+        if let data = try? Data(contentsOf: settingsPath), let saved = try? JSONDecoder().decode(Settings.self, from: data) { settings = saved }
+        // Written back on every launch so migrated values replace old ones and retired fields drop out.
+        if let normalized = try? JSONEncoder().encode(settings), normalized != (try? Data(contentsOf: settingsPath)) { try? normalized.write(to: settingsPath, options: .atomic) }
+        if let local = RuntimeChecks.localConfig(settings) {
+            settings.baseURL = local.summary.baseURL; settings.modelID = local.summary.modelID
+        }
+        refreshModelLabels()
+        bridge.onReport = { [weak self] report in Task { @MainActor in self?.receiveBrowser(report) } }
+        bridge.onStatus = { [weak self] message in Task { @MainActor in self?.bridgeStatus = message } }
+        bridge.onAck = { [weak self] ack in Task { @MainActor in self?.acknowledgeJump(ack) } }
+        bridge.onPage = { [weak self] page in Task { @MainActor in self?.receivePage(page) } }
+        if settings.browserBridge { bridge.start(token: settings.bridgeToken) }
+        writePairing()
+        reloadHistory()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in Task { @MainActor in self?.tick() } }
+    }
+    func refreshModelLabels() {
+        aiStatus = settings.aiEnabled ? "后台 \(settings.modelID)" : "AI 未启用 · 本地规则"
+        launcherModel = settings.aiEnabled ? RuntimeChecks.quickConfiguration(settings).modelID : "未启用"
+    }
+    var aiDescription: String { settings.aiEnabled ? "后台理解 \(settings.modelID.isEmpty ? "未配置模型" : settings.modelID) · 唤起 \(RuntimeChecks.quickConfiguration(settings).modelID)" : "StepFun 模型未启用" }
+    func saveSettings(_ draft: Settings, key: String, clearKey: Bool) {
+        do {
+            if draft.aiEnabled || !draft.modelID.isEmpty { _ = try AIClient.endpoint(draft.baseURL) }
+            if draft.aiEnabled && draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw AIError(message: "启用 AI 前请填写 Model ID") }
+            var updated = draft
+            updated.retentionDays = min(90, max(1, updated.retentionDays))
+            let current = RuntimeChecks.summaryConfiguration(settings)
+            let summaryKey = clearKey ? "" : !key.isEmpty ? key.trimmingCharacters(in: .whitespacesAndNewlines) : updated.summaryAccount == settings.summaryAccount ? current.apiKey : Keychain.read(updated.summaryAccount)
+            if let path = updated.localConfigPath {
+                let existing = RuntimeChecks.localConfig(settings)
+                var input = ConfigurationInput(summary: .init(baseURL: updated.baseURL, modelID: updated.modelID, apiKey: summaryKey, reasoningEffort: existing?.summary.reasoningEffort))
+                input.quick = existing?.quick
+                try RuntimeChecks.writeLocal(input, path: path)
+            } else if clearKey || !key.isEmpty { try Keychain.write(summaryKey, account: updated.summaryAccount) }
+            try JSONEncoder().encode(updated).write(to: settingsPath, options: .atomic)
+            stopJobs()
+            settings = updated
+            browserTabs = []; browserUpdated = .distantPast
+            if settings.browserBridge { bridge.start(token: settings.bridgeToken) } else { bridge.stop(); bridgeStatus = "浏览器桥接已关闭" }
+            writePairing()
+            clipText = nil; copied = nil
+            refreshModelLabels()
+            status = "设置已保存"
+            NotificationCenter.default.post(name: .init("StepBarSettingsChanged"), object: nil)
+            save()
+        } catch { status = error.localizedDescription }
+    }
+    var extensionFolder: URL? {
+        guard let config = settings.localConfigPath else { return nil }
+        let folder = URL(fileURLWithPath: config).deletingLastPathComponent().appendingPathComponent("browser-extension")
+        return FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path) ? folder : nil
+    }
+    // Lets the unpacked extension pair itself; the file is git-ignored and only readable by the extension.
+    func writePairing() {
+        guard let folder = extensionFolder else { return }
+        let data = try? JSONEncoder().encode(["token": settings.bridgeToken])
+        try? data?.write(to: folder.appendingPathComponent("pairing.json"), options: .atomic)
+    }
+    func installExtension() {
+        writePairing()
+        if let folder = extensionFolder { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+        if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: BrowserTab.chrome), let page = URL(string: "chrome://extensions") {
+            NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
+        }
+        status = "在 Chrome 扩展页打开「开发者模式」→「加载已解压的扩展程序」→ 选择 Finder 里选中的 browser-extension 文件夹，会自动配对。"
+    }
+    func togglePause() {
+        paused.toggle(); stopJobs()
+        clipText = nil; copied = nil
+        pasteCount = NSPasteboard.general.changeCount
+        if paused { results = [] }
+        status = paused ? "已暂停：不读取剪贴板、不学习、不调用 AI" : "已恢复"
+    }
+
+    // MARK: Collection
+    func tick() {
+        guard !paused else { return }
+        let now = Date()
+        if NSPasteboard.general.changeCount != pasteCount { readClipboard(now: now) }
+        if now.timeIntervalSince(jobsAt) > 60 { jobsAt = now; backgroundJobs() }
+        if pendingSave && now.timeIntervalSince(savedAt) > 5 && !launcherOpen { save() }
+    }
+    func receiveBrowser(_ report: BrowserReport) {
+        guard settings.browserBridge, !paused else { return }
+        browserTabs = report.tabs.filter { !settings.excludes(url: $0.url) }
+        browserUpdated = Date()
+        bridgeStatus = "Chrome 已连接 · \(browserTabs.count) 个标签页"
+        guard let active = browserTabs.first(where: { $0.active && $0.focused }), active.url != lastActiveURL else { return }
+        lastActiveURL = active.url
+        learn(from: active.url)
+    }
+    // What the pages the user opens teach: a search results page becomes "search this site", and an address
+    // containing the id copied just before becomes a query entry for that kind of id.
+    func learn(from url: String) {
+        if let (template, _) = Inference.searchTemplate(url: url), let host = URL(string: url)?.host {
+            let label = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+            if let index = memory.recipes.firstIndex(where: { $0.shape == "search" && $0.template == template }) {
+                memory.recipes[index].count += 1; memory.recipes[index].updated = Date()
+            } else { memory.recipes.append(Recipe(source: "search", template: template, label: label, shape: "search")) }
+            pendingSave = true
+        }
+        if let copied, Date().timeIntervalSince(copied.date) < 120,
+           let template = Inference.template(url: url, object: copied.value), Inference.learnable(template, value: copied.value) {
+            let shape = Inference.shape(copied.value)
+            if let index = memory.recipes.firstIndex(where: { $0.template == template && $0.shape == shape }) {
+                memory.recipes[index].count += 1; memory.recipes[index].updated = Date()
+            } else { memory.recipes.append(Recipe(source: "clipboard", template: template, label: URL(string: url)?.host ?? "网页", shape: shape)) }
+            self.copied = nil; pendingSave = true
+            status = "已学到一个查询入口：\(template)"
+        }
+    }
+    func receivePage(_ page: PageText) {
+        guard !paused, !settings.excludes(url: page.url) else { return }
+        PageIndex.insert(page, into: &pages); pagesDirty = true; pendingSave = true
+    }
+    // Any copied text is kept briefly as context; password-manager copies and secret-looking text are skipped.
+    func readClipboard(now: Date) {
+        let board = NSPasteboard.general
+        pasteCount = board.changeCount
+        clipDate = now
+        let concealed = (board.types ?? []).contains { ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "com.agilebits.onepassword"].contains($0.rawValue) }
+        let raw = concealed ? nil : board.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A copied secret is dropped entirely; phone numbers and e-mail addresses are masked and the rest kept.
+        var safe = raw.flatMap { !$0.isEmpty && Privacy.secrets($0) == $0 ? String(Privacy.personal($0).prefix(500)) : nil }
+        if let text = safe, Inference.safeURL(text) != nil { safe = Privacy.url(text) }
+        clipText = safe
+        copied = Inference.object(safe).map { ($0, now) }
+    }
+    var copiedText: String? { paused || Date().timeIntervalSince(clipDate) > 300 ? nil : clipText }
+    // Called on the hotkey before the panel takes focus.
+    func captureInvocation() {
+        guard !paused else { return }
+        if NSPasteboard.general.changeCount != pasteCount { readClipboard(now: Date()) }
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        currentPage = front == BrowserTab.chrome && Date().timeIntervalSince(browserUpdated) < 60 ? browserTabs.first { $0.active && $0.focused } : nil
+    }
+
+    // MARK: Background understanding (step-5-preview)
+    // Page notes and URL patterns. Needs AC power, a cool Mac, 30 s without input and a closed launcher;
+    // the hotkey cancels a running job.
+    func backgroundJobs() {
+        if Date().timeIntervalSince(historyAt) > 900 && !launcherOpen { reloadHistory() }
+        guard settings.aiEnabled, settings.background, !paused, !launcherOpen, jobTask == nil, !history.isEmpty else { return }
+        let gate = Gate.now()
+        guard gate.allowsAI || Demo.on && gate.idle >= 5 else {
+            backgroundStatus = "后台：暂停（\(gate.onAC ? "" : "未接电源 ")\(gate.lowPower ? "低电量模式 " : "")\(gate.cool ? "" : "温度高 ")\(gate.idle < 30 ? "正在使用" : "")）"; return
+        }
+        guard budget.allows() else { backgroundStatus = "后台：本小时额度已用 \(budget.used / 1000)k，稍后继续"; return }
+        let config = Study.configuration(settings)
+        let sites = Array(PatternMiner.pending(history: history + searchPages, studied: memory.studied).prefix(PatternMiner.hostsPerCall))
+        let notes = Array(Understand.pending(pool: freshTabs + history, notes: memory.notes, pages: pages).prefix(Understand.batch))
+        guard !sites.isEmpty || !notes.isEmpty else { backgroundStatus = "后台：已理解 \(memory.notes.count) 个页面、\(memory.patterns.count) 个网址模式"; return }
+        let pages = self.pages, started = Date()
+        jobTask = Task { [weak self] in
+            do {
+                // URL patterns first: few calls, and they make whole sites reachable by parameter.
+                if !sites.isEmpty {
+                    self?.backgroundStatus = "后台：\(config.modelID) 正在分析 \(sites.map(\.host).joined(separator: "、")) 的网址结构"
+                    let found = try await Study.patterns(sites, configuration: config)
+                    guard let self, !Task.isCancelled else { return }
+                    let hosts = Set(sites.map(\.host))
+                    self.memory.patterns.removeAll { hosts.contains($0.host) }
+                    self.memory.patterns += found
+                    for site in sites { self.memory.studied[site.host] = Studied(pages: site.items.count) }
+                    self.budget.spent(PatternMiner.payload(sites).count * 2 / 3 + 3000)
+                    self.backgroundStatus = "后台：找到 \(found.count) 个网址模式 · \(Int(Date().timeIntervalSince(started)))s"
+                } else {
+                    self?.backgroundStatus = "后台：\(config.modelID) 正在理解 \(notes.count) 个页面"
+                    let written = try await Study.notes(notes, pages: pages, configuration: config)
+                    guard let self, !Task.isCancelled else { return }
+                    self.memory.notes.merge(written) { $1 }
+                    self.budget.spent(Understand.payload(notes, pages: pages).count * 2 / 3 + notes.count * 150 + 3000)
+                    self.backgroundStatus = "后台：理解了 \(written.count) 个页面 · \(Int(Date().timeIntervalSince(started)))s · 共 \(self.memory.notes.count)"
+                }
+                self?.pendingSave = true
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.budget.failed()
+                self.backgroundStatus = "后台：失败（\(error.localizedDescription)），\(Int(self.budget.retryAt.timeIntervalSinceNow))s 后重试"
+            }
+            self?.jobTask = nil
+            // More to do: continue on the next tick instead of waiting a minute.
+            self?.jobsAt = .distantPast
+        }
+    }
+    func stopJobs() { jobTask?.cancel(); jobTask = nil }
+    // The hotkey wins: background model calls stop so the launcher gets the network and quota.
+    func yieldToForeground() {
+        launcherOpen = true
+        if jobTask != nil { stopJobs(); backgroundStatus = "后台：已让路给搜索" }
+    }
+    func testAI() {
+        guard !testingAI else { return }
+        testingAI = true
+        let config = Study.configuration(settings)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.testingAI = false }
+            do {
+                let _: AINotes = try await self.ai.complete(AINotes.self, configuration: config, system: "只输出 JSON：{\"items\":[]}", payload: "连接测试，不含用户数据。")
+                self.aiStatus = "连接成功 · \(config.modelID)"
+            } catch { self.aiStatus = error.localizedDescription }
+        }
+    }
+
+    // MARK: Opening
+    func acknowledgeJump(_ ack: BrowserAck) {
+        guard let item = pendingJumps.removeValue(forKey: ack.id) else { return }
+        if ack.success { status = "已切换到标签页：\(item.title)"; return }
+        // The tab was closed or moved meanwhile: open the page instead.
+        if let text = item.url, let url = Inference.safeURL(text) { openWeb(url); status = "标签页已不在，已重新打开" }
+    }
+    func save() {
+        let excluded = settings.excludes
+        memory.recipes.removeAll { excluded($0.template.replacingOccurrences(of: "{value}", with: "x")) }
+        memory.patterns.removeAll { excluded($0.template.replacingOccurrences(of: "{value}", with: "x")) }
+        memory.notes = memory.notes.filter { !($0.key.hasPrefix("u:") && excluded(String($0.key.dropFirst(2)))) }
+        let now = Date(), cutoff = now.addingTimeInterval(-Double(settings.retentionDays) * 86400)
+        if !history.isEmpty { memory.notes = Understand.prune(memory.notes, alive: Set(history.map(\.id) + freshTabs.map(\.id)), now: now) }
+        // Learned entries are what makes StepBar better with use: they stay until unused for 180 days.
+        let stale = now.addingTimeInterval(-180 * 86400)
+        memory.recipes = Array(memory.recipes.filter { $0.updated > stale }.sorted { $0.updated < $1.updated }.suffix(300))
+        if memory.choices.count > 1000 { memory.choices = Dictionary(uniqueKeysWithValues: memory.choices.sorted { $0.value > $1.value }.prefix(1000).map { ($0.key, $0.value) }) }
+        if memory.queryChoices.count > 800 { memory.queryChoices = Dictionary(uniqueKeysWithValues: memory.queryChoices.sorted { $0.value.values.reduce(0, +) > $1.value.values.reduce(0, +) }.prefix(800).map { ($0.key, $0.value) }) }
+        let wanted = Set(memory.queryChoices.values.flatMap(\.keys)).union(memory.choices.keys)
+        memory.remembered = memory.remembered.filter { wanted.contains($0.key) }
+        memory.searchLog = Array(memory.searchLog.filter { $0.date > cutoff }.suffix(500))
+        var pageSnapshot: [String: PageText]?
+        if pagesDirty { pageSnapshot = pages.filter { $0.value.date > cutoff && !excluded($0.value.url) }; pagesDirty = false }
+        // Encoding happens off the main thread on a value copy. The serial queue keeps writes in order.
+        let snapshot = memory, path = self.path, pagesPath = self.pagesPath
+        pendingSave = false; savedAt = now
+        Store.writer.async {
+            if let pageSnapshot { PageIndex.save(pageSnapshot, to: pagesPath) }
+            do { try JSONEncoder().encode(snapshot).write(to: path, options: .atomic) }
+            catch { let message = error.localizedDescription; Task { @MainActor in self.status = "保存失败：\(message)" } }
+        }
+    }
+    static let writer = DispatchQueue(label: "stepbar.save", qos: .utility)
+    func clear() {
+        stopJobs(); pendingJumps = [:]; memory = Memory(); results = []; pages = [:]; pagesDirty = true; clipText = nil; copied = nil
+        save(); status = "本地记忆已清空"
+    }
+    func removeRecipe(_ id: UUID) { memory.recipes.removeAll { $0.id == id }; save() }
+    func removePattern(_ id: UUID) {
+        if let host = memory.patterns.first(where: { $0.id == id })?.host { memory.studied[host] = Studied(pages: Int.max / 4) }
+        memory.patterns.removeAll { $0.id == id }; save()
+    }
+    func removeNote(_ id: String) { memory.notes[id] = nil; save() }
+    func resetAfterWake() { stopJobs(); clipText = nil; copied = nil }
+}
