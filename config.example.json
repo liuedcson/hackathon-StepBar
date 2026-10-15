@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "provider": "openAI",
+    "baseURL": "https://api.stepfun.com/step_plan/v1",
+    "modelID": "step-5-preview",
+    "apiKey": "",
+    "reasoningEffort": "medium"
+  },
+  "quick": {
+    "provider": "openAI",
+    "baseURL": "https://api.stepfun.com/step_plan/v1",
+    "modelID": "step-3.7-flash",
+    "apiKey": "",
+    "reasoningEffort": "low"
+  }
+}

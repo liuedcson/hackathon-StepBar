@@ -1,0 +1,10 @@
+.build/
+build/
+.DS_Store
+
+config.local.json
+browser-extension/pairing.json
+config.*.local.json
+.env
+.env.*
+*.secrets.json
