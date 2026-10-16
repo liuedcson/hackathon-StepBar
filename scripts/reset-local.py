@@ -7,7 +7,11 @@ home = pathlib.Path.home()
 targets = [root / '.build', root / 'build', root / 'browser-extension/pairing.json',
            home / 'Library/Application Support/StepBar', home / 'Library/Application Support/IntentBar',
            home / 'Library/Preferences/local.stepbar.app.plist',
-           home / 'Library/Caches/local.stepbar.app', home / 'Library/Saved Application State/local.stepbar.app.savedState']
+            home / 'Library/Caches/local.stepbar.app', home / 'Library/Saved Application State/local.stepbar.app.savedState']
+extension = home / 'Downloads/StepBar-browser-extension'
+# Only remove an export created by StepBar; leave unrelated folders and symlinks alone.
+if not extension.is_symlink() and (extension / '.stepbar-managed').is_file():
+    targets.append(extension)
 for base in [pathlib.Path('/Applications'), home / 'Applications']:
     for name in ['StepBar.app', 'IntentBar.app']:
         app = base / name
@@ -41,4 +45,4 @@ subprocess.run(['tccutil', 'reset', 'Microphone', 'local.stepbar.app'], stdout=s
 for path in targets:
     if path.is_symlink() or path.is_file(): path.unlink()
     elif path.is_dir(): shutil.rmtree(path)
-print('StepBar local app, data, app credentials, pairing and builds removed. Source and config.local.json retained. Chrome profiles untouched.')
+print('StepBar local app, data, app credentials, managed extension export, pairing and builds removed. Source and config.local.json retained. Chrome profiles untouched. Remove the loaded StepBar extension manually at chrome://extensions.')

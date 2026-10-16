@@ -197,6 +197,28 @@ v0.1.1 会将可加载的扩展准备到下载目录；再次点击可刷新文�
 
 完整重装、验收与故障排查见 [安装与使用指南](docs/INSTALL.md)。
 
+## 一键卸载／干净重装
+
+在已下载或克隆的项目根目录，先预览要清理的路径：
+
+```sh
+python3 scripts/reset-local.py
+```
+
+确认后，一条命令卸载（需要 Python 3）：
+
+```sh
+python3 scripts/reset-local.py --confirm
+```
+
+脚本会退出 StepBar，删除 `/Applications` 或 `~/Applications` 中的应用、本机记忆和设置、缓存、StepBar 专用钥匙串凭据（包括旧更新 Token）、配对文件和项目构建产物；新版导出的 `~/Downloads/StepBar-browser-extension` 仅在有 StepBar 管理标记时删除。
+
+**源码、`config.local.json`、发布签名证书、Chrome 历史及其他扩展都会保留。** `config.local.json` 可能仍有你填写的模型 Key；不再需要时请自行删除。非标准位置的应用需手动移入废纸篓；权限不足时先退出应用并检查文件权限，不建议用 `sudo` 运行整个脚本。
+
+最后打开 **`chrome://extensions` → StepBar for Chrome → 移除**。为避免修改 Chrome 用户数据，脚本不会替你执行这一步。
+
+仅下载安装包、没有源码的用户：先从 [仓库](https://github.com/liuedcson/hackathon-StepBar) 的 **Code → Download ZIP** 下载并解压，终端进入解压目录，再执行上述命令。只把 `.app` 移到废纸篓不会清除记忆与密钥。
+
 ## 使用
 
 **唤起与输入**
