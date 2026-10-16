@@ -56,6 +56,45 @@ extension InferenceTests {
         catch { precondition(!error.localizedDescription.contains("secret")); precondition(error.localizedDescription.contains("401")) }
         MockProtocol.handler = { _ in (200, Data("{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"{}\"}}]}".utf8)) }
         do { let _: AINotes = try await client.complete(AINotes.self, configuration: configuration, system: "JSON", payload: "test"); preconditionFailure("Truncated response accepted") } catch {}
+        MockProtocol.handler = { request in
+            var data = request.httpBody
+            if data == nil, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = Data(); var bytes = [UInt8](repeating: 0, count: 1024)
+                while stream.hasBytesAvailable { let n = stream.read(&bytes, maxLength: bytes.count); if n <= 0 { break }; buffer.append(contentsOf: bytes.prefix(n)) }
+                data = buffer
+            }
+            let body = try JSONSerialization.jsonObject(with: data!) as! [String: Any]
+            XCTAssertEqual(body["max_tokens"] as? Int, 1)
+            XCTAssertNil(body["reasoning_effort"])
+            XCTAssertNil(body["response_format"])
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
+            return (200, Data("{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"H\"}}]}".utf8))
+        }
+        try await client.probe(configuration: configuration)
+        MockProtocol.handler = { _ in (401, Data("private echoed credential".utf8)) }
+        do { try await client.probe(configuration: configuration); preconditionFailure("Probe accepted HTTP error") }
+        catch { precondition(!error.localizedDescription.contains("private")) }
+        MockProtocol.handler = { _ in (200, Data("{}".utf8)) }
+        do { try await client.probe(configuration: configuration); preconditionFailure("Probe accepted invalid envelope") } catch {}
+        let defaults = UserDefaults(suiteName: "StepBarTests-\(UUID().uuidString)")!
+        let updater = await Updater(session: client.session, defaults: defaults, startChecks: false)
+        let automatic = await updater.automatic
+        precondition(automatic, "New installations must check updates by default")
+        let architecture = await Updater.architecture
+        MockProtocol.handler = { request in
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertEqual(request.url?.host, "api.github.com")
+            if request.url!.path.hasSuffix("/latest") {
+                return (200, Data("{\"tag_name\":\"v9.0.0\",\"draft\":false,\"prerelease\":false,\"assets\":[{\"id\":1,\"name\":\"update-\(architecture).json\",\"size\":100},{\"id\":2,\"name\":\"StepBar-9.0.0-\(architecture).zip\",\"size\":100}]}".utf8))
+            }
+            return (200, try JSONEncoder().encode(ReleaseManifest(version: "9.0.0", asset: "StepBar-9.0.0-\(architecture).zip", sha256: String(repeating: "a", count: 64), architecture: architecture)))
+        }
+        await updater.check()
+        let available = await updater.available
+        XCTAssertEqual(available, "9.0.0")
+        await updater.save(automatic: false)
+        precondition(!defaults.bool(forKey: "StepBarAutomaticUpdates"))
         MockProtocol.handler = nil
     }
     func testStepPlanTransport() async throws {

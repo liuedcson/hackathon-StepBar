@@ -94,14 +94,14 @@ StepBar 要做的，不只是匹配标题，而是理解页面讲了什么、对
 
 ## 安装
 
-### v0.1.0 安装包（无需 Swift 工具链）
+### v0.1.1 安装包（无需 Swift 工具链）
 
 需要 **macOS 13+、Apple Silicon（M 系列芯片）和 Google Chrome**。目前没有发布 Intel 安装包。
 
-- [直接下载 StepBar-0.1.0-arm64.zip](https://github.com/liuedcson/hackathon-StepBar/releases/download/v0.1.0/StepBar-0.1.0-arm64.zip)
-- [Release 页面与版本说明](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.0)
+- [直接下载 StepBar-0.1.1-arm64.zip](https://github.com/liuedcson/hackathon-StepBar/releases/download/v0.1.1/StepBar-0.1.1-arm64.zip)
+- [Release 页面与版本说明](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.1)
 
-仓库是私有的，需先登录有访问权限的 GitHub 账号。链接显示 404 时，先检查登录与仓库权限，不要从不明来源下载。
+源码与 Releases 公开，无需 GitHub 登录或 Token。不要从不明来源下载。
 
 1. 下载 ZIP 并解压，得到 `StepBar.app`。
 2. 将应用移到 `/Applications`，或自己的 `~/Applications` 文件夹，再双击打开。不要一直从下载目录运行。
@@ -123,11 +123,11 @@ StepBar 要做的，不只是匹配标题，而是理解页面讲了什么、对
 
 **不需要关闭 Gatekeeper、修改全局安全设置、开启完全磁盘访问或辅助功能权限。** 麦克风权限仅在启用并使用语音时按需申请。未来正式分发需要 Developer ID 签名、Hardened Runtime 和 Apple 公证；本版尚未完成。
 
-### 私有 GitHub 授权更新
+### 自动检查更新
 
-设置 →「版本与授权更新」，填写自己的 fine-grained GitHub Token：仅授权本仓库，`Contents: Read-only`，存入本机钥匙串。可启用启动时和每 6 小时检查；发现新版本后确认下载、验证并安装重启，不静默安装。
+设置 →「版本与更新」，默认启动时和每 6 小时自动检查公开 GitHub Releases，无需 Token。可关闭自动检查；发现新版本后确认下载、验证并安装重启，不静默安装。
 
-GitHub Releases 保存 ZIP 和 `update-arm64.json`（版本、文件名、架构、SHA-256）。下载时 GitHub Token 仅发送到固定 GitHub API，跳转至 GitHub 签名资源地址时去掉 Token。校验包摘要、版本、Bundle ID 和与当前应用相同的签名身份，不通过则不安装。以后版本必须使用同一签名证书；Token 失效或没有权限时可登录 GitHub 手动下载。更新后 Chrome 扩展需重新加载。
+GitHub Releases 保存 ZIP 和 `update-arm64.json`（版本、文件名、架构、SHA-256）。匿名请求固定 GitHub API，只接受允许的 GitHub HTTPS 资源重定向。校验包摘要、版本、Bundle ID 和与当前应用相同的签名身份，不通过则不安装。以后版本必须使用同一签名证书；网络故障或匿名 API 限流时可手动下载。更新后 Chrome 扩展需重新加载。旧版 v0.1.0 的更新界面仍需要 Token，建议先手动安装 v0.1.1。
 
 ### 从源码构建
 
@@ -157,7 +157,7 @@ open build/StepBar.app
 
 - **官方 · StepFun Step Plan**：地址固定为官方 Step Plan；后台记忆和前台检索的 Model ID 分别填写，共用一个 Step Plan Key。
 - **自定义 · OpenAI 兼容协议**：后台记忆、前台检索分别填写 Base URL、Model ID 和 API Key，可使用不同服务。Base URL 通常以 `/v1` 结尾，也可填写完整 `/chat/completions` 地址；本机服务支持 HTTP，其他地址要求 HTTPS。
-- API Key 留空保留已保存值；可以单独删除。保存后立即生效，点击「测试已保存的 AI 配置」会分别测试后台和前台，不发送浏览历史。
+- API Key 使用单行密码框显示已保存值，不明文展示；清空后保存即删除。保存后立即生效，点击「测试已保存的 AI 配置」分别以 `max_tokens=1` 检查后台和前台连通性，不生成业务内容、不发送浏览历史；不代表搜索、语音或 JSON 输出均已验证。
 - 官方模式的搜索和语音使用 Step Plan；**自定义模式完全不调用 Step Plan**。自定义搜索默认关闭，可选择 Bing 等搜索引擎入口（仅点击后打开，不提供模型上下文），或配置独立的搜索 JSON API（完整 URL、独立 Key，POST `{query,n}`，返回 `{results:[{title,url,snippet,time?}]}`）。
 - 自定义语音默认关闭。需要时配置 OpenAI 兼容音频转写接口的完整 URL（如 `https://asr.example/v1/audio/transcriptions`）、Model ID 和独立 Key。发送 multipart WAV，返回 `{text}`。未启用或未配置完整时不录音、不请求麦克风权限；不支持此协议的服务请保持关闭。
 
@@ -170,13 +170,13 @@ open build/StepBar.app
 **方式一：使用安装包（推荐，不需要下载源码）**
 
 1. 先启动 StepBar，保持菜单栏应用运行。
-2. 点击菜单栏 → **安装 Chrome 扩展**。应用会准备扩展资源，在 Finder 中选中文件夹，并尝试打开 Chrome 扩展页。
+2. 点击菜单栏 → **设置 → Chrome 扩展 → 安装 Chrome 扩展**。应用会准备扩展资源，在 Finder 中选中文件夹，并尝试打开 Chrome 扩展页。
 3. 在 Chrome 地址栏输入 `chrome://extensions`，打开右上角 **开发者模式**。
-4. 点击 **加载已解压的扩展程序**，选择 Finder 中的 `browser-extension` 文件夹。不是选择 ZIP、`.app` 或某个 JS 文件。
-5. 如果找不到文件夹：在选择窗口按 **⌘⇧G**，粘贴 `~/Library/Application Support/StepBar/browser-extension`，再选中它。
+4. 点击 **加载已解压的扩展程序**，选择 Finder 中的 `StepBar-browser-extension` 文件夹。不是选择 ZIP、`.app` 或某个 JS 文件。
+5. 如果找不到文件夹：在选择窗口按 **⌘⇧G**，粘贴 `~/Downloads/StepBar-browser-extension`，再选中它。
 6. 扩展会读取该目录里的本机配对码自动连接。这个目录需长期保留；不要加载后删除或移动。
 
-**下一版改进（当前源码，尚未发布）：** 点击「安装 Chrome 扩展」会将可加载的扩展准备到 **`~/Downloads/StepBar-browser-extension`**，并在 Finder 中选中它。Chrome 中选择这个文件夹即可；以后再次点击可刷新扩展文件，再在 Chrome 中点「重新加载」。该目录安装后不能删除或移动。已发布 v0.1.0 仍使用上面的 Application Support 路径。
+v0.1.1 会将可加载的扩展准备到下载目录；再次点击可刷新文件，再在 Chrome 中点「重新加载」。旧版 v0.1.0 仍使用 `~/Library/Application Support/StepBar/browser-extension`，从旧版升级请移除旧扩展并加载新目录。
 
 **方式二：从 Git 仓库加载扩展**
 
@@ -218,7 +218,7 @@ open build/StepBar.app
 
 不输入直接 ⌘M 时，显示和剪贴板相关的建议以及最近的页面。
 
-菜单栏里的「Step 的理解与记忆」窗口可以查看后台写下的页面理解、网址模式、学到的查询入口和选择，也可以逐条删除或修改设置。
+设置 →「运行信息」→「查看 Step 的理解与记忆」，可以查看后台写下的页面理解、网址模式、学到的查询入口和选择，也可以逐条删除。菜单栏只保留设置、暂停／恢复和退出。
 
 ## 越用越好用
 

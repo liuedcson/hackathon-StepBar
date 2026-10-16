@@ -105,13 +105,15 @@ struct SettingsView: View {
     @ObservedObject var store: Store
     @State private var draft = Settings()
     @State private var key = ""
-    @State private var clearKey = false
     @State private var foregroundKey = ""
-    @State private var clearForegroundKey = false
     @State private var searchKey = ""
     @State private var voiceKey = ""
-    @State private var clearSearchKey = false
-    @State private var clearVoiceKey = false
+    private func loadKeys() {
+        key = RuntimeChecks.summaryConfiguration(draft).apiKey
+        foregroundKey = RuntimeChecks.quickBase(draft).apiKey
+        searchKey = RuntimeChecks.searchKey(draft)
+        voiceKey = RuntimeChecks.voiceConfiguration(draft).apiKey
+    }
     var body: some View {
         ScrollView {
             Form {
@@ -120,18 +122,16 @@ struct SettingsView: View {
                     Picker("配置模式", selection: $draft.aiProvider) {
                         Text("官方 · StepFun Step Plan").tag("stepPlan")
                         Text("自定义 · OpenAI 兼容协议").tag("custom")
-                    }.onChange(of: draft.aiProvider) { _ in key = ""; foregroundKey = ""; searchKey = ""; voiceKey = ""; clearKey = false; clearForegroundKey = false; clearSearchKey = false; clearVoiceKey = false }
+                    }.onChange(of: draft.aiProvider) { _ in loadKeys() }
                     if draft.isCustom {
                         Text("后台记忆 · 页面理解与网址模式").font(.headline)
                         TextField("后台 Base URL", text: $draft.customBackgroundURL)
                         TextField("后台 Model ID", text: $draft.customBackgroundModel)
-                        SecureField("后台 API Key（留空保留）", text: $key)
-                        Toggle("删除后台 API Key", isOn: $clearKey)
+                        SecureField("后台 API Key", text: $key)
                         Text("前台检索 · 候选挑选与网址生成").font(.headline)
                         TextField("前台 Base URL", text: $draft.customForegroundURL)
                         TextField("前台 Model ID", text: $draft.customForegroundModel)
-                        SecureField("前台 API Key（留空保留）", text: $foregroundKey)
-                        Toggle("删除前台 API Key", isOn: $clearForegroundKey)
+                        SecureField("前台 API Key", text: $foregroundKey)
                         Toggle("请求 JSON 输出模式（服务支持时开启）", isOn: $draft.jsonMode)
                         Text("两个服务独立配置。填写 OpenAI Chat Completions Base URL（通常以 /v1 结尾）。自定义模式不会调用 Step Plan，包括搜索和语音。") .font(.caption)
                         Picker("联网搜索", selection: $draft.customSearchMode) {
@@ -145,24 +145,21 @@ struct SettingsView: View {
                         }
                         if draft.customSearchMode == "api" {
                             TextField("搜索 API 完整 URL", text: $draft.customSearchURL)
-                            SecureField("搜索 API Key（独立，留空保留）", text: $searchKey)
-                            Toggle("删除搜索 API Key", isOn: $clearSearchKey)
+                            SecureField("搜索 API Key", text: $searchKey)
                             Text("POST JSON {query,n}，Bearer 鉴权；响应 {results:[{title,url,snippet,time?}]}。需使用兼容此格式的搜索服务或网关，不是 Bing 搜索网页地址。结果会作为前台模型上下文。") .font(.caption)
                         }
                         Toggle("启用自定义语音转写（默认关闭）", isOn: $draft.customVoiceEnabled)
                         if draft.customVoiceEnabled {
                             TextField("语音完整 URL（例如 …/v1/audio/transcriptions）", text: $draft.customVoiceURL)
                             TextField("语音 Model ID", text: $draft.customVoiceModel)
-                            SecureField("语音 API Key（独立，留空保留）", text: $voiceKey)
-                            Toggle("删除语音 API Key", isOn: $clearVoiceKey)
+                            SecureField("语音 API Key", text: $voiceKey)
                             Text("OpenAI 兼容音频转写：multipart WAV + model，返回 {text}。服务不支持此协议时请保持关闭；未配置不录音、不申请麦克风权限。") .font(.caption)
                         }
                     } else {
                         Text("官方地址：\(Settings.stepPlan)").font(.caption)
                         TextField("后台记忆 Model ID", text: $draft.modelID)
                         TextField("前台检索 Model ID", text: $draft.quickModelID)
-                        SecureField("Step Plan API Key（留空保留）", text: $key)
-                        Toggle("删除 Step Plan API Key", isOn: $clearKey)
+                        SecureField("Step Plan API Key", text: $key)
                     }
                     Text("后台仅在空闲且接电源时运行。官方默认：后台 step-5-preview（high），前台 step-3.7-flash（low）。语音：stepaudio-2.5-asr。")
                         .font(.caption)
@@ -171,7 +168,7 @@ struct SettingsView: View {
                     Text("后台向配置的后台模型发送页面信息；前台向配置的前台模型发送输入、剪贴板、候选及联网结果。搜索只发送输入的词，不含剪贴板。回忆、链接、订单号/ID 不联网。个人信息先打码，带敏感参数的网址不发送。各服务密钥独立，仅保存在本机配置或钥匙串。")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        Button("保存设置") { store.saveSettings(draft, key: key, clearKey: clearKey, foregroundKey: foregroundKey, clearForegroundKey: clearForegroundKey, searchKey: searchKey, clearSearchKey: clearSearchKey, voiceKey: voiceKey, clearVoiceKey: clearVoiceKey); key = ""; foregroundKey = ""; searchKey = ""; voiceKey = ""; clearKey = false; clearForegroundKey = false; clearSearchKey = false; clearVoiceKey = false }
+                        Button("保存设置") { store.saveSettings(draft, key: key, clearKey: key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, foregroundKey: foregroundKey, clearForegroundKey: foregroundKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, searchKey: searchKey, clearSearchKey: searchKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, voiceKey: voiceKey, clearVoiceKey: voiceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
                         Button(store.testingAI ? "测试中…" : "测试已保存的 AI 配置") { store.testAI() }.disabled(store.testingAI)
                     }
                     Text(store.aiStatus).font(.caption).textSelection(.enabled)
@@ -198,13 +195,14 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("运行信息") {
+                    Button("查看 Step 的理解与记忆") { NotificationCenter.default.post(name: .init("StepBarShowDiagnostics"), object: nil) }
                     Text("本地数据：\(store.path.deletingLastPathComponent().path)").font(.caption).textSelection(.enabled)
                     if let path = store.settings.localConfigPath { Text("本地配置：\(path) · 编辑后重启生效").font(.caption).textSelection(.enabled) }
                     Text("StepBar v\(Updater.version) · AI 不可用时保留本地两层结果").font(.caption).foregroundStyle(.secondary)
                 }
                 UpdateSettingsView(updater: store.updater)
             }.formStyle(.grouped).scrollContentBackground(.hidden).padding()
-        }.onAppear { draft = store.settings }
+        }.onAppear { draft = store.settings; loadKeys() }
     }
 }
 

@@ -4,15 +4,15 @@
 
 ## 推荐：通过 StepBar 安装包安装
 
-运行 StepBar → 菜单栏「安装 Chrome 扩展」→ Chrome 打开 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」。选择应用准备的目录：
+运行 StepBar → 设置 → Chrome 扩展 →「安装 Chrome 扩展」→ Chrome 打开 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」。选择应用准备的目录：
 
 ```text
-~/Library/Application Support/StepBar/browser-extension
+~/Downloads/StepBar-browser-extension
 ```
 
 选择窗口按 ⌘⇧G 可输入此路径。应用会写入本机配对码，扩展自动连接。保留这个目录，更新应用后重新加载扩展。
 
-下一版的源码已改为点击安装时导出到 `~/Downloads/StepBar-browser-extension` 并在 Finder 选中，更方便选择。此改动尚未进入 v0.1.0 安装包。Chrome 持续从选定目录加载，安装后不能删除或移动；再次点击安装可刷新导出文件，然后在 Chrome 重新加载。
+v0.1.1 在 Finder 选中下载目录的扩展。v0.1.0 仍使用 `~/Library/Application Support/StepBar/browser-extension`。Chrome 持续从选定目录加载，安装后不能删除或移动；再次点击安装可刷新导出文件，然后在 Chrome 重新加载。升级时移除旧扩展，再加载新目录。
 
 ## 直接加载本仓库目录
 

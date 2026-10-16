@@ -21,8 +21,7 @@ struct ReleaseManifest: Codable {
 
 @MainActor final class Updater: ObservableObject {
     static let repository = "liuedcson/hackathon-StepBar"
-    static let tokenAccount = "github:release-read"
-    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0" }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.1" }
     static var architecture: String {
         #if arch(arm64)
         return "arm64"
@@ -35,32 +34,31 @@ struct ReleaseManifest: Codable {
     @Published var status = "未检查更新"
     @Published var busy = false
     @Published var available: String?
-    @Published var automatic = UserDefaults.standard.bool(forKey: "StepBarAutomaticUpdates")
+    @Published var automatic: Bool
     private var ready: (ReleaseManifest, Asset)?
     private var timer: Timer?
-    private let session = AIClient(timeout: 60).session
+    private let session: URLSession
+    private let defaults: UserDefaults
 
-    init() {
+    init(session: URLSession? = nil, defaults: UserDefaults = .standard, startChecks: Bool = true) {
+        self.session = session ?? AIClient(timeout: 60).session
+        self.defaults = defaults
+        automatic = (defaults.object(forKey: "StepBarAutomaticUpdates") as? Bool) ?? true
+        guard startChecks else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in if self?.automatic == true { await self?.check() } }
         }
         if automatic { Task { await check() } }
     }
-    func save(token: String, clear: Bool, automatic: Bool) {
-        do {
-            if clear || !token.isEmpty { try Keychain.write(clear ? "" : token.trimmingCharacters(in: .whitespacesAndNewlines), account: Self.tokenAccount) }
+    func save(automatic: Bool) {
             self.automatic = automatic
-            UserDefaults.standard.set(automatic, forKey: "StepBarAutomaticUpdates")
+            defaults.set(automatic, forKey: "StepBarAutomaticUpdates")
             ready = nil; available = nil
-            status = "更新配置已保存；Token 仅在本机钥匙串中"
-        } catch { status = "无法保存更新凭据" }
+            status = "更新配置已保存"
     }
     private func get(_ path: String, binary: Bool = false, limit: Int) async throws -> Data {
-        let token = Keychain.read(Self.tokenAccount)
-        guard !token.isEmpty else { throw AIError(message: "请先保存 GitHub 只读 Token") }
         let url = URL(string: "https://api.github.com/repos/\(Self.repository)/\(path)")!
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(binary ? "application/octet-stream" : "application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.setValue("StepBar/\(Self.version)", forHTTPHeaderField: "User-Agent")
@@ -75,13 +73,13 @@ struct ReleaseManifest: Codable {
             guard let reply = reply as? HTTPURLResponse, reply.statusCode == 200, bytes.count <= limit else { throw AIError(message: "更新资源下载失败") }
             return bytes
         }
-        guard http.statusCode == 200, data.count <= limit else { throw AIError(message: "GitHub 请求失败（\(http.statusCode)），检查 Token 权限与 Release") }
+        guard http.statusCode == 200, data.count <= limit else { throw AIError(message: "GitHub 请求失败（\(http.statusCode)），请稍后重试或手动下载") }
         return data
     }
     func check() async {
         guard !busy else { return }
         busy = true; defer { busy = false }
-        ready = nil; available = nil; status = "正在检查 GitHub 私有 Release…"
+        ready = nil; available = nil; status = "正在检查 GitHub Release…"
         do {
             let release = try JSONDecoder().decode(Release.self, from: await get("releases/latest", limit: 1_000_000))
             guard !release.draft, !release.prerelease,
@@ -148,23 +146,17 @@ struct ReleaseManifest: Codable {
 
 struct UpdateSettingsView: View {
     @ObservedObject var updater: Updater
-    @State private var token = ""
-    @State private var clear = false
-    @State private var automatic = false
     @State private var confirm = false
     var body: some View {
-        Section("版本与授权更新") {
+        Section("版本与更新") {
             Text("StepBar v\(Updater.version) · \(Updater.architecture)")
-            SecureField("GitHub 只读 Token（留空保留）", text: $token)
-            Text("私有仓库：\(Updater.repository)。Fine-grained Token 仅授权该仓库 Contents: Read-only；不使用模型 Key，不内置开发者 Token。") .font(.caption)
-            Toggle("删除更新 Token", isOn: $clear)
-            Toggle("启动时及每 6 小时自动检查更新", isOn: $automatic)
-            Button("保存更新配置") { updater.save(token: token, clear: clear, automatic: automatic); token = ""; clear = false }
+            Text("从公开 GitHub Releases 获取更新，无需 Token。") .font(.caption)
+            Toggle("启动时及每 6 小时自动检查更新", isOn: Binding(get: { updater.automatic }, set: { updater.save(automatic: $0) }))
             Button("检查更新") { Task { await updater.check() } }.disabled(updater.busy)
             if let version = updater.available { Button("下载并安装 v\(version)") { confirm = true }.disabled(updater.busy) }
             Text(updater.status).font(.caption).textSelection(.enabled)
             Text("下载后验证 SHA-256、版本与相同签名身份，确认安装时退出并重启。未公证应用首次安装可能需手动放行；更新后 Chrome 扩展需要重新加载。") .font(.caption)
-        }.onAppear { automatic = updater.automatic }
+        }
         .alert("安装更新并重启 StepBar？", isPresented: $confirm) {
             Button("取消", role: .cancel) {}
             Button("安装") { Task { await updater.install() } }

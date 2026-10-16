@@ -38,6 +38,23 @@ struct AIClient {
         guard let url = parts.url else { throw AIError(message: "Base URL 无效") }
         return url
     }
+    // Connectivity only: truncated output is expected and no JSON generation is required.
+    func probe(configuration: AIConfiguration) async throws {
+        guard !configuration.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AIError(message: "请填写 Model ID") }
+        var request = URLRequest(url: try Self.endpoint(configuration.baseURL))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !configuration.apiKey.isEmpty { request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization") }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["model": configuration.modelID, "stream": false, "max_tokens": 1, "messages": [["role": "user", "content": "Hi"]]])
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw AIError(message: "AI 连通性检查失败；检查地址、模型和 API Key。")
+        }
+        guard data.count <= 1_000_000,
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]], !choices.isEmpty,
+              choices[0]["message"] is [String: Any] else { throw AIError(message: "服务未返回 Chat Completions 响应") }
+    }
     func complete<T: Decodable>(_ type: T.Type, configuration: AIConfiguration, system: String, payload: String) async throws -> T {
         guard !configuration.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AIError(message: "请填写 Model ID") }
         var request = URLRequest(url: try Self.endpoint(configuration.baseURL))

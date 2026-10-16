@@ -33,12 +33,8 @@ import Combine
             self?.item.button?.toolTip = paused ? "StepBar · 已暂停" : "StepBar · 阶跃星辰 Chrome AI 聚焦搜索"
         }
         let menu = NSMenu()
-        menu.addItem(withTitle: "StepBar 搜索  ⌘M", action: #selector(show), keyEquivalent: "")
-        menu.addItem(withTitle: "Step 的理解与记忆", action: #selector(diagnostics), keyEquivalent: "")
         menu.addItem(withTitle: "设置", action: #selector(settings), keyEquivalent: "")
         menu.addItem(withTitle: "暂停 / 恢复", action: #selector(pause), keyEquivalent: "")
-        menu.addItem(withTitle: "安装 Chrome 扩展", action: #selector(installExtension), keyEquivalent: "")
-        menu.addItem(.separator())
         menu.addItem(withTitle: "退出 StepBar", action: #selector(quit), keyEquivalent: "q")
         for entry in menu.items { entry.target = self }
         item.menu = menu
@@ -58,6 +54,7 @@ import Combine
         }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
         registerHotkey()
         NotificationCenter.default.addObserver(self, selector: #selector(registerHotkey), name: .init("StepBarSettingsChanged"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(diagnostics), name: .init("StepBarShowDiagnostics"), object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(quit), name: .init("StepBarInstallUpdate"), object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(wake), name: NSWorkspace.didWakeNotification, object: nil)
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -163,9 +160,6 @@ final class KeyPanel: NSPanel {
     @MainActor static func main() {
         if CommandLine.arguments.contains("--update-check") {
             let updater = Updater()
-            if CommandLine.arguments.contains("--update-token-from-stdin") {
-                updater.save(token: String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self), clear: false, automatic: false)
-            }
             Task { await updater.check(); print(updater.status); exit(updater.status.contains("最新版本") || updater.available != nil ? 0 : 1) }
             RunLoop.main.run(); return
         }

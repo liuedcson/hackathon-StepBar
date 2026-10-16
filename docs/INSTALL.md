@@ -1,14 +1,14 @@
-# StepBar v0.1.0 安装与使用指南
+# StepBar v0.1.1 安装与使用指南
 
 ## 下载与系统要求
 
 需要 macOS 13+、Apple Silicon（M 系列芯片）及 Google Chrome。目前只发布 arm64 包，Intel 用户需自行构建，尚无对应安装包。
 
-- [直接下载 ZIP](https://github.com/liuedcson/hackathon-StepBar/releases/download/v0.1.0/StepBar-0.1.0-arm64.zip)
-- [版本说明与资源列表](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.0)
+- [直接下载 ZIP](https://github.com/liuedcson/hackathon-StepBar/releases/download/v0.1.1/StepBar-0.1.1-arm64.zip)
+- [版本说明与资源列表](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.1)
 - [扩展源码](../browser-extension/)
 
-以上 GitHub 资源为私有，需要登录有访问权限的账号。404 通常应先检查账号与权限。解压后把 StepBar.app 移入 `/Applications` 或 `~/Applications`，双击启动；应用常驻屏幕顶部菜单栏，不显示 Dock 主窗口。
+以上 GitHub 资源公开，无需登录或 Token。解压后把 StepBar.app 移入 `/Applications` 或 `~/Applications`，双击启动；应用常驻屏幕顶部菜单栏，不显示 Dock 主窗口。
 
 ## 首次启动被 Apple 拦截
 
@@ -29,7 +29,7 @@
 
 - 官方 Step Plan：地址固定，默认后台 step-5-preview、前台 step-3.7-flash，共用你的 Step Plan Key。
 - 自定义：后台、前台分别填 Base URL、Model ID 和 Key。搜索与语音单独配置；默认关闭，不借用 Step Plan。Bing 网页入口仅供点击，不能给模型提供搜索结果。
-- API Key 留空保留原值；安装包不包含密钥，也不会自动加载源码旁的 config.local.json。不配置 AI 仍可先测试本地检索。
+- API Key 以密码框载入已保存值，清空后保存即删除。测试分别请求后台、前台，`max_tokens=1`，只验证连通性，不验证业务生成、搜索或语音。安装包不包含密钥，也不会自动加载源码旁的 config.local.json。不配置 AI 仍可先测试本地检索。
 
 ## 安装 Chrome 扩展
 
@@ -37,13 +37,13 @@
 
 ### 安装包用户：自动准备与配对
 
-1. 保持 StepBar 正在运行，点击菜单栏 →「安装 Chrome 扩展」。
+1. 保持 StepBar 正在运行，点击菜单栏 →「设置」→「Chrome 扩展」→「安装 Chrome 扩展」。
 2. Chrome 地址栏输入 `chrome://extensions`，开启右上角「开发者模式」。
 3. 点击「加载已解压的扩展程序」，选择应用准备的 `browser-extension` 文件夹。
-4. 若找不到，在选择窗口按 ⌘⇧G，输入 `~/Library/Application Support/StepBar/browser-extension`。
+4. 若找不到，在选择窗口按 ⌘⇧G，输入 `~/Downloads/StepBar-browser-extension`。
 5. 不要选择应用包、压缩文件或单个 JS；不要在加载后移动／删除扩展目录。
 
-下一版（当前源码，尚未发布）会改为在点击安装时准备 **`~/Downloads/StepBar-browser-extension`**，弹出 Finder 并选中该文件夹。在 Chrome 选择它即可；再次点击可刷新文件，之后重新加载扩展。下载目录并不是临时安装文件：Chrome 持续依赖它，请不要清理或移动。v0.1.0 安装包仍使用 Application Support 路径。
+v0.1.1 点击安装时准备 **`~/Downloads/StepBar-browser-extension`**，弹出 Finder 并选中它。在 Chrome 选择该文件夹即可；再次点击可刷新文件，之后重新加载扩展。下载目录并不是临时安装文件：Chrome 持续依赖它，请不要清理或移动。v0.1.0 仍使用 Application Support 路径，升级后移除旧扩展并加载新目录。
 
 ### 源码用户：加载仓库目录并手动配对
 
@@ -74,6 +74,6 @@
 
 ## 更新与版本边界
 
-设置 →「版本与授权更新」，填入只授权本仓库 Contents: Read-only 的 GitHub fine-grained Token，存钥匙串。可自动检查，下载与安装需用户确认；无 Token 或权限不足时通过 GitHub 手动下载。更新后重载 Chrome 扩展。
+设置 →「版本与更新」，默认启动时及每 6 小时自动检查公开 Releases，无需 Token，可关闭。下载与安装需用户确认，校验 SHA-256、版本、Bundle ID 和相同签名身份；网络故障或匿名请求限流时手动下载。旧版 v0.1.0 的更新界面仍需要 Token，建议先手动安装 v0.1.1。更新后重载 Chrome 扩展。
 
-私有 Release 查询和隔离安装脚本已测试；真实跨版本升级待下一版验收。v0.1.0 安装包未包含发布后源码中的中文语音无空格站内搜索修复。网址可能失效，部分网站需要登录；未来跨应用 MCP 能力尚未实现。
+v0.1.1 纳入中文语音无空格站内搜索修复。网址可能失效，部分网站需要登录；真实麦克风按键录音与用户现场跨版本升级仍需验收，未来跨应用 MCP 能力尚未实现。

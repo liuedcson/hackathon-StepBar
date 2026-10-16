@@ -363,7 +363,7 @@ import SwiftUI
             for (index, config) in configurations.enumerated() {
                 let label = index == 0 ? "后台" : "前台"
                 do {
-                    let _: AINotes = try await self.ai.complete(AINotes.self, configuration: config, system: "只输出 JSON：{\"items\":[]}", payload: "连接测试，不含用户数据。")
+                    try await self.ai.probe(configuration: config)
                     statuses.append("\(label)：连接成功")
                 } catch { statuses.append("\(label)：\(error.localizedDescription)") }
             }
