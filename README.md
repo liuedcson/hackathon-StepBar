@@ -199,25 +199,55 @@ v0.1.1 会将可加载的扩展准备到下载目录；再次点击可刷新文�
 
 ## 一键卸载／干净重装
 
-在已下载或克隆的项目根目录，先预览要清理的路径：
+**无需 Python、无需下载源码。** 先在菜单栏退出 StepBar，然后在 macOS「终端」一次性粘贴以下原生命令。**此操作不可撤销，会清除记忆、设置和 StepBar 专用钥匙串密钥（包括旧更新 Token）。**
 
 ```sh
-python3 scripts/reset-local.py
+(
+  set -e
+  # 只删除身份匹配的 StepBar 应用，避免误删同名文件夹。
+  for app in "/Applications/StepBar.app" "$HOME/Applications/StepBar.app"; do
+    if [ -d "$app" ] && [ ! -L "$app" ]; then
+      id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist")
+      if [ "$id" != "local.stepbar.app" ]; then
+        echo "应用身份不匹配，停止卸载：$app"
+        exit 1
+      fi
+      /bin/rm -rf "$app"
+    fi
+  done
+
+  # 一个 service 下可能有多条独立服务密钥，逐条删除。
+  while :; do
+    code=0
+    /usr/bin/security find-generic-password -s local.stepbar.ai >/dev/null 2>&1 || code=$?
+    [ "$code" -eq 44 ] && break
+    if [ "$code" -ne 0 ]; then
+      echo "无法访问 StepBar 钥匙串凭据，停止卸载。"
+      exit 1
+    fi
+    /usr/bin/security delete-generic-password -s local.stepbar.ai >/dev/null
+  done
+
+  /usr/bin/defaults delete local.stepbar.app >/dev/null 2>&1 || true
+  /usr/bin/tccutil reset Microphone local.stepbar.app >/dev/null 2>&1 || true
+  /bin/rm -rf "$HOME/Library/Application Support/StepBar" \
+    "$HOME/Library/Preferences/local.stepbar.app.plist" \
+    "$HOME/Library/Caches/local.stepbar.app" \
+    "$HOME/Library/Saved Application State/local.stepbar.app.savedState"
+
+  extension="$HOME/Downloads/StepBar-browser-extension"
+  if [ ! -L "$extension" ] && [ -f "$extension/.stepbar-managed" ]; then
+    /bin/rm -rf "$extension"
+  fi
+  echo "StepBar 已卸载。请在 chrome://extensions 手动移除 StepBar 扩展。"
+)
 ```
 
-确认后，一条命令卸载（需要 Python 3）：
+最后打开 **`chrome://extensions` → StepBar for Chrome → 移除**。命令不会修改 Chrome 历史、用户资料或其他扩展。
 
-```sh
-python3 scripts/reset-local.py --confirm
-```
+非标准位置的应用需手动移入废纸篓；权限不足时手动移除应用并重试，不需要全局关闭安全保护，也不建议给整段命令加 `sudo`。上述命令只卸载 StepBar，不清理旧 IntentBar。
 
-脚本会退出 StepBar，删除 `/Applications` 或 `~/Applications` 中的应用、本机记忆和设置、缓存、StepBar 专用钥匙串凭据（包括旧更新 Token）、配对文件和项目构建产物；新版导出的 `~/Downloads/StepBar-browser-extension` 仅在有 StepBar 管理标记时删除。
-
-**源码、`config.local.json`、发布签名证书、Chrome 历史及其他扩展都会保留。** `config.local.json` 可能仍有你填写的模型 Key；不再需要时请自行删除。非标准位置的应用需手动移入废纸篓；权限不足时先退出应用并检查文件权限，不建议用 `sudo` 运行整个脚本。
-
-最后打开 **`chrome://extensions` → StepBar for Chrome → 移除**。为避免修改 Chrome 用户数据，脚本不会替你执行这一步。
-
-仅下载安装包、没有源码的用户：先从 [仓库](https://github.com/liuedcson/hackathon-StepBar) 的 **Code → Download ZIP** 下载并解压，终端进入解压目录，再执行上述命令。只把 `.app` 移到废纸篓不会清除记忆与密钥。
+**源码、项目构建产物、`config.local.json` 和发布签名证书会保留。** 开发者不再需要源码配置或仓库中的 `browser-extension/pairing.json` 时，请自行删除这些私有文件；不要把含模型 Key 或配对码的文件上传。只把 `.app` 移到废纸篓不会清除记忆与密钥。
 
 ## 使用
 
