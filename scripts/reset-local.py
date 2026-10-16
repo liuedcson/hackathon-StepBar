@@ -28,14 +28,14 @@ for row in subprocess.check_output(['ps', '-axo', 'pid,comm'], text=True).splitl
         os.kill(int(fields[0]), signal.SIGTERM)
 subprocess.run(['osascript', '-e', 'delay 2'], check=True)
 # Delete only credentials belonging to this app, including the legacy app service.
-swift = '''import Security
-for service in ["local.stepbar.ai", "local.intentbar.ai"] {
- let q = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as [String: Any]
- let result = SecItemDelete(q as CFDictionary)
- if result != errSecSuccess && result != errSecItemNotFound { exit(1) }
-}
-'''
-subprocess.run(['swift', '-e', 'import Foundation\n' + swift], check=True, stdout=subprocess.DEVNULL)
+for service in ['local.stepbar.ai', 'local.intentbar.ai']:
+    for _ in range(100):
+        found = subprocess.run(['security', 'find-generic-password', '-s', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if found.returncode == 44: break  # errSecItemNotFound
+        if found.returncode != 0: raise SystemExit('Cannot inspect app credentials; cleanup stopped')
+        deleted = subprocess.run(['security', 'delete-generic-password', '-s', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if deleted.returncode != 0: raise SystemExit('Cannot remove app credential; cleanup stopped')
+    else: raise SystemExit('Too many app credentials; cleanup stopped')
 subprocess.run(['defaults', 'delete', 'local.stepbar.app'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 subprocess.run(['tccutil', 'reset', 'Microphone', 'local.stepbar.app'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 for path in targets:
