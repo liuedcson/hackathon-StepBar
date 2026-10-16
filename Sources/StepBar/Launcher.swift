@@ -191,6 +191,7 @@ extension Store {
         let pool = candidates ?? (text.isEmpty ? aiCandidates : layerCandidates(text))
         if candidates == nil { aiCandidates = pool }
         let epoch = searchGeneration, config = RuntimeChecks.quickConfiguration(settings)
+        guard !config.apiKey.isEmpty else { return nil }
         let input = Assistant.payload(query: text, current: currentPage, clipboard: copiedText, candidates: pool, recipes: memory.recipes,
                                       searches: searchEntries, patterns: memory.patterns)
         generating = true

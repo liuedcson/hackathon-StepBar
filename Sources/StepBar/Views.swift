@@ -200,8 +200,9 @@ struct SettingsView: View {
                 Section("运行信息") {
                     Text("本地数据：\(store.path.deletingLastPathComponent().path)").font(.caption).textSelection(.enabled)
                     if let path = store.settings.localConfigPath { Text("本地配置：\(path) · 编辑后重启生效").font(.caption).textSelection(.enabled) }
-                    Text("StepBar 0.4 · 由阶跃星辰 Step Plan 驱动 · AI 不可用时保留本地两层结果").font(.caption).foregroundStyle(.secondary)
+                    Text("StepBar v\(Updater.version) · AI 不可用时保留本地两层结果").font(.caption).foregroundStyle(.secondary)
                 }
+                UpdateSettingsView(updater: store.updater)
             }.formStyle(.grouped).scrollContentBackground(.hidden).padding()
         }.onAppear { draft = store.settings }
     }

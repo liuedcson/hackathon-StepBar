@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "StepBar for Chrome · 阶跃星辰",
-  "version": "0.4.0",
+  "version": "0.1.0",
   "description": "Shares open tabs and page text with the local StepBar app so it can understand your pages; switches or closes tabs on request.",
   "permissions": [
     "tabs",

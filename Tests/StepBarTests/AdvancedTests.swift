@@ -198,6 +198,11 @@ extension InferenceTests {
     }
     func testWebSearch() async throws {
         var settings = Settings()
+        XCTAssertEqual(ReleaseManifest.newer("0.1.1", than: "0.1.0"), true)
+        XCTAssertEqual(ReleaseManifest.newer("0.10.0", than: "0.2.0"), true)
+        XCTAssertEqual(ReleaseManifest.newer("0.1.0", than: "0.1.0"), false)
+        XCTAssertEqual(ReleaseManifest.newer("0.0.9", than: "0.1.0"), false)
+        XCTAssertEqual(ReleaseManifest.newer("0.2", than: "0.1.0"), false)
         settings.aiProvider = "custom"
         XCTAssertEqual(settings.customSearchMode, "disabled")
         XCTAssertEqual(settings.voiceAvailable, false)

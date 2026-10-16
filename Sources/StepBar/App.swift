@@ -58,6 +58,7 @@ import Combine
         }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
         registerHotkey()
         NotificationCenter.default.addObserver(self, selector: #selector(registerHotkey), name: .init("StepBarSettingsChanged"), object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(quit), name: .init("StepBarInstallUpdate"), object: nil)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(wake), name: NSWorkspace.didWakeNotification, object: nil)
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
@@ -160,6 +161,14 @@ final class KeyPanel: NSPanel {
 
 @main struct StepBarMain {
     @MainActor static func main() {
+        if CommandLine.arguments.contains("--update-check") {
+            let updater = Updater()
+            if CommandLine.arguments.contains("--update-token-from-stdin") {
+                updater.save(token: String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self), clear: false, automatic: false)
+            }
+            Task { await updater.check(); print(updater.status); exit(updater.status.contains("最新版本") || updater.available != nil ? 0 : 1) }
+            RunLoop.main.run(); return
+        }
         if CommandLine.arguments.contains("--configure-from-stdin") {
             do { try RuntimeChecks.configure() }
             catch { fputs("Configuration failed; check input and Keychain access.\n", stderr); exit(1) }
@@ -212,4 +221,3 @@ final class KeyPanel: NSPanel {
         withExtendedLifetime(delegate) { app.run() }
     }
 }
-

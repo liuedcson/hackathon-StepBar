@@ -20,7 +20,7 @@ async function sync() {
     if (!token) return;
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Browser-Bundle': bundle };
     const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
-    const tabs = windows.flatMap(w => (w.tabs || []).map(t => ({ id: t.id, windowID: w.id, title: t.title || '', url: t.url || '', active: t.active, focused: w.focused, bundle })));
+    const tabs = windows.filter(w => !w.incognito).flatMap(w => (w.tabs || []).filter(t => !t.incognito).map(t => ({ id: t.id, windowID: w.id, title: t.title || '', url: t.url || '', active: t.active, focused: w.focused, bundle })));
     const report = await fetch(`${endpoint}/events`, { method: 'POST', headers, body: JSON.stringify({ bundle, tabs }), signal: AbortSignal.timeout(3000) });
     if (!report.ok) throw new Error(`Bridge HTTP ${report.status}`);
     const response = await fetch(`${endpoint}/command`, { headers, signal: AbortSignal.timeout(3000) });

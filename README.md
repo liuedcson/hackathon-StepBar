@@ -35,7 +35,24 @@ StepBar 是一个常驻 macOS 菜单栏的 Chrome 搜索入口：按 **⌘M**，
 
 ## 安装
 
-需要 macOS 13 及以上、Swift 5.9 及以上工具链（Xcode 或 Command Line Tools）、Google Chrome，以及一个 [StepFun Step Plan](https://platform.stepfun.com/) Key。
+### v0.1.0 安装包（无需 Swift 工具链）
+
+1. 登录 GitHub，打开 [私有 Releases](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.0)，下载对应架构的 `StepBar-0.1.0-arm64.zip`（Apple Silicon）。
+2. 解压，将 `StepBar.app` 移到 `~/Applications` 或有写权限的 `/Applications`，再打开。需要 macOS 13+ 和 Google Chrome。
+3. 当前使用本机固定签名，**未通过 Apple 公证**。若系统拦截，在「系统设置 → 隐私与安全性」中手动允许打开；不建议关闭系统安全保护。
+4. 菜单栏 → 设置，填写官方 Step Plan Key，或分别配置自定义后台/前台服务。安装包不包含任何 Key，不会自动读取源码旁的 `config.local.json`。
+5. 菜单栏 → 安装 Chrome 扩展，在扩展页开启开发者模式，加载 Finder 选中的文件夹。扩展资源由应用复制到 `~/Library/Application Support/StepBar/browser-extension`，自动生成本机配对码。
+6. 按 ⌘M 验证历史搜索，再测试 AI 配置与目标网页。语音按需配置，未启用的自定义语音不申请权限。
+
+### 私有 GitHub 授权更新
+
+设置 →「版本与授权更新」，填写自己的 fine-grained GitHub Token：仅授权本仓库，`Contents: Read-only`，存入本机钥匙串。可启用启动时和每 6 小时检查；发现新版本后确认下载、验证并安装重启，不静默安装。
+
+GitHub Releases 保存 ZIP 和 `update-arm64.json`（版本、文件名、架构、SHA-256）。下载时 GitHub Token 仅发送到固定 GitHub API，跳转至 GitHub 签名资源地址时去掉 Token。校验包摘要、版本、Bundle ID 和与当前应用相同的签名身份，不通过则不安装。以后版本必须使用同一签名证书；Token 失效或没有权限时可登录 GitHub 手动下载。更新后 Chrome 扩展需重新加载。
+
+### 从源码构建
+
+额外需要 Swift 工具链（Xcode 或 Command Line Tools）。配置也可以直接在应用设置中填写；使用本机配置文件的开发者可按以下流程配置。
 
 ```sh
 git clone https://github.com/liuedcson/hackathon-StepBar.git
@@ -73,7 +90,7 @@ open build/StepBar.app
 
 1. 打开 `chrome://extensions`，开启右上角「开发者模式」；
 2. 点「加载已解压的扩展程序」，选择仓库里的 `browser-extension` 文件夹；
-3. 扩展会读取构建时生成的 `browser-extension/pairing.json` 自动配对。重新构建后，在扩展页点一下「重新加载」。
+3. 推荐通过菜单栏「安装 Chrome 扩展」选择应用准备好的扩展文件夹，自动配对。更新后在扩展页点「重新加载」。
 
 不装扩展也能用，这时只搜索 Chrome 历史。
 

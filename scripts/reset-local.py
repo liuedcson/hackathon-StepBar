@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Explicit clean reinstall: keep source and config.local.json; never edit Chrome profiles."""
+import pathlib, shutil, subprocess, os, signal, sys
+
+root = pathlib.Path(__file__).resolve().parents[1]
+home = pathlib.Path.home()
+targets = [root / '.build', root / 'build', root / 'browser-extension/pairing.json',
+           home / 'Library/Application Support/StepBar', home / 'Library/Application Support/IntentBar',
+           home / 'Library/Preferences/local.stepbar.app.plist',
+           home / 'Library/Caches/local.stepbar.app', home / 'Library/Saved Application State/local.stepbar.app.savedState']
+for base in [pathlib.Path('/Applications'), home / 'Applications']:
+    for name in ['StepBar.app', 'IntentBar.app']:
+        app = base / name
+        if app.exists():
+            import plistlib
+            info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+            if info.get('CFBundleIdentifier') not in ['local.stepbar.app', 'local.intentbar.app']:
+                raise SystemExit('Application identity mismatch; refusing cleanup')
+            targets.append(app)
+if '--confirm' not in sys.argv:
+    print('Dry run only. Add --confirm to remove these exact StepBar paths:')
+    for path in targets:
+        if path.exists(): print(path)
+    raise SystemExit(0)
+for row in subprocess.check_output(['ps', '-axo', 'pid,comm'], text=True).splitlines():
+    fields = row.strip().split(None, 1)
+    if len(fields) == 2 and fields[1].endswith(('/StepBar.app/Contents/MacOS/StepBar', '/IntentBar.app/Contents/MacOS/IntentBar')):
+        os.kill(int(fields[0]), signal.SIGTERM)
+subprocess.run(['osascript', '-e', 'delay 2'], check=True)
+# Delete only credentials belonging to this app, including the legacy app service.
+swift = '''import Security
+for service in ["local.stepbar.ai", "local.intentbar.ai"] {
+ let q = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as [String: Any]
+ let result = SecItemDelete(q as CFDictionary)
+ if result != errSecSuccess && result != errSecItemNotFound { exit(1) }
+}
+'''
+subprocess.run(['swift', '-e', 'import Foundation\n' + swift], check=True, stdout=subprocess.DEVNULL)
+subprocess.run(['defaults', 'delete', 'local.stepbar.app'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run(['tccutil', 'reset', 'Microphone', 'local.stepbar.app'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+for path in targets:
+    if path.is_symlink() or path.is_file(): path.unlink()
+    elif path.is_dir(): shutil.rmtree(path)
+print('StepBar local app, data, app credentials, pairing and builds removed. Source and config.local.json retained. Chrome profiles untouched.')

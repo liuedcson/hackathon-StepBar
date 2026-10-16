@@ -51,6 +51,7 @@ import SwiftUI
     var budget = Budget()
     var pendingSave = false
     let voice = VoiceInput()
+    let updater = Updater()
     let bridge = BrowserBridge()
     let ai = AIClient()
     private var timer: Timer?
@@ -163,15 +164,26 @@ import SwiftUI
         } catch { status = error.localizedDescription }
     }
     var extensionFolder: URL? {
-        guard let config = settings.localConfigPath else { return nil }
-        let folder = URL(fileURLWithPath: config).deletingLastPathComponent().appendingPathComponent("browser-extension")
+        let folder = Settings.folder.appendingPathComponent("browser-extension")
         return FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path) ? folder : nil
     }
     // Lets the unpacked extension pair itself; the file is git-ignored and only readable by the extension.
     func writePairing() {
+        let target = Settings.folder.appendingPathComponent("browser-extension")
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("browser-extension"), FileManager.default.fileExists(atPath: bundled.appendingPathComponent("manifest.json").path) {
+            do {
+                try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+                for file in ["manifest.json", "background.js", "options.html", "options.js", "icons"] {
+                    let destination = target.appendingPathComponent(file)
+                    if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
+                    try FileManager.default.copyItem(at: bundled.appendingPathComponent(file), to: destination)
+                }
+            } catch { status = "扩展资源安装失败，请重试。" }
+        }
         guard let folder = extensionFolder else { return }
         let data = try? JSONEncoder().encode(["token": settings.bridgeToken])
         try? data?.write(to: folder.appendingPathComponent("pairing.json"), options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: folder.appendingPathComponent("pairing.json").path)
     }
     func installExtension() {
         writePairing()

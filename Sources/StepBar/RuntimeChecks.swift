@@ -277,7 +277,13 @@ extension RuntimeChecks {
         guard let wav = try? Data(contentsOf: URL(fileURLWithPath: path)), let marker = wav.range(of: Data("data".utf8)) else { print("voice: cannot read \(path)"); return }
         let start = Date()
         do {
-            let text = try await VoiceInput.transcribe(wav.suffix(from: marker.upperBound + 4), configuration: quickConfiguration(loadSearchData().settings)) { _ in }
+            let settings = loadSearchData().settings
+            guard settings.voiceAvailable else { throw AIError(message: "语音未启用") }
+            let pcm = Data(wav.suffix(from: marker.upperBound + 4))
+            let config = voiceConfiguration(settings)
+            let text: String
+            if settings.isCustom { text = try await VoiceInput.transcribeOpenAI(pcm, configuration: config) }
+            else { text = try await VoiceInput.transcribe(pcm, configuration: config) { _ in } }
             print("voice: \(text) · \(ms(start)) ms")
         } catch { print("voice: FAIL \(error.localizedDescription)") }
     }
