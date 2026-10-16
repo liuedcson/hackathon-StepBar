@@ -143,7 +143,6 @@ import Combine
         default: (kVK_ANSI_M, cmdKey)
         }
         let result = RegisterEventHotKey(UInt32(key), UInt32(modifiers), EventHotKeyID(signature: 0x53545042, id: 1), GetApplicationEventTarget(), 0, &hotkey)
-        item.menu?.items.first?.title = "StepBar 搜索  \(store.settings.hotkeyLabel.replacingOccurrences(of: " ", with: ""))"
         if result != noErr { store.status = "快捷键已被占用，请从菜单栏唤出或在设置里切换。" }
     }
     @objc func wake() { store.resetAfterWake() }

@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import LocalAuthentication
 
 struct Settings: Codable, Equatable {
     var localConfigPath: String?
@@ -102,6 +103,10 @@ enum Keychain {
         var q = query(account, service: service)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
+        // Never interrupt launch, settings rendering or background work with an authorization dialog.
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        q[kSecUseAuthenticationContext as String] = context
         var item: CFTypeRef?
         guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return "" }
         return String(data: data, encoding: .utf8) ?? ""

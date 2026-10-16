@@ -105,9 +105,9 @@ import SwiftUI
     }
     func refreshModelLabels() {
         aiStatus = settings.aiEnabled ? "后台 \(settings.backgroundModel)" : "AI 未启用 · 本地规则"
-        launcherModel = settings.aiEnabled ? RuntimeChecks.quickConfiguration(settings).modelID : "未启用"
+        launcherModel = settings.aiEnabled ? settings.foregroundModel : "未启用"
     }
-    var aiDescription: String { settings.aiEnabled ? "后台理解 \(settings.backgroundModel) · 唤起 \(RuntimeChecks.quickConfiguration(settings).modelID)" : "模型未启用" }
+    var aiDescription: String { settings.aiEnabled ? "后台理解 \(settings.backgroundModel) · 唤起 \(settings.foregroundModel)" : "模型未启用" }
     func saveSettings(_ draft: Settings, key: String, clearKey: Bool, foregroundKey: String = "", clearForegroundKey: Bool = false, searchKey: String = "", clearSearchKey: Bool = false, voiceKey: String = "", clearVoiceKey: Bool = false) {
         do {
             if draft.aiEnabled {
