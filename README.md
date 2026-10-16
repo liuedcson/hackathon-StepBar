@@ -4,13 +4,13 @@ StepBar 的愿景是成为 **macOS 生态级的工作伙伴**：连接你授权�
 
 **不只是“找到一个东西”，而是“知道你接下来要做什么”。**
 
-## 核心理念：从上下文，到下一步
+## 核心理念：From Context To StepFun 一步到位
 
 办公不是一组孤立的搜索，而是一条跨应用的工作路径：看到消息、了解问题、查找资料、打开工具、继续处理。StepBar 希望在用户授权下连接这些上下文，逐渐学会“什么情况下，你通常会去哪、做什么”，把常用路径整理成可复用的组合。
 
 有时，你知道想找什么，却记不起它叫什么。
 
-浏览器开了几十个页面，标签越来越窄。你记得之前看过一篇讲强化学习（RL）的博客，解释得很好，却忘了标题、网站和打开的时间。
+浏览器开了几十个页面，标签越来越窄。你记得之前看过一篇讲强化学习的博客，解释得很好，却忘了标题、网站和打开的时间。
 
 不必逐个翻标签，也不必猜关键词。唤起 StepBar，说一句：
 
@@ -94,12 +94,11 @@ StepBar 要做的，不只是匹配标题，而是理解页面讲了什么、对
 
 ## 安装
 
-### v0.1.1 安装包（无需 Swift 工具链）
+### 最新安装包（无需 Swift 工具链）
 
 需要 **macOS 13+、Apple Silicon（M 系列芯片）和 Google Chrome**。目前没有发布 Intel 安装包。
 
-- [直接下载 StepBar-0.1.1-arm64.zip](https://github.com/liuedcson/hackathon-StepBar/releases/download/v0.1.1/StepBar-0.1.1-arm64.zip)
-- [Release 页面与版本说明](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.1)
+- [下载最新版本与查看版本说明](https://github.com/liuedcson/hackathon-StepBar/releases/latest)（在 Assets 中选择 `StepBar-版本号-arm64.zip`）
 
 源码与 Releases 公开，无需 GitHub 登录或 Token。不要从不明来源下载。
 
@@ -199,55 +198,19 @@ v0.1.1 会将可加载的扩展准备到下载目录；再次点击可刷新文�
 
 ## 一键卸载／干净重装
 
-**无需 Python、无需下载源码。** 先在菜单栏退出 StepBar，然后在 macOS「终端」一次性粘贴以下原生命令。**此操作不可撤销，会清除记忆、设置和 StepBar 专用钥匙串密钥（包括旧更新 Token）。**
+应用首次启动后，会在本机记忆目录准备卸载工具。无需 Python、无需下载源码，在 macOS「终端」执行一行：
 
 ```sh
-(
-  set -e
-  # 只删除身份匹配的 StepBar 应用，避免误删同名文件夹。
-  for app in "/Applications/StepBar.app" "$HOME/Applications/StepBar.app"; do
-    if [ -d "$app" ] && [ ! -L "$app" ]; then
-      id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Contents/Info.plist")
-      if [ "$id" != "local.stepbar.app" ]; then
-        echo "应用身份不匹配，停止卸载：$app"
-        exit 1
-      fi
-      /bin/rm -rf "$app"
-    fi
-  done
-
-  # 一个 service 下可能有多条独立服务密钥，逐条删除。
-  while :; do
-    code=0
-    /usr/bin/security find-generic-password -s local.stepbar.ai >/dev/null 2>&1 || code=$?
-    [ "$code" -eq 44 ] && break
-    if [ "$code" -ne 0 ]; then
-      echo "无法访问 StepBar 钥匙串凭据，停止卸载。"
-      exit 1
-    fi
-    /usr/bin/security delete-generic-password -s local.stepbar.ai >/dev/null
-  done
-
-  /usr/bin/defaults delete local.stepbar.app >/dev/null 2>&1 || true
-  /usr/bin/tccutil reset Microphone local.stepbar.app >/dev/null 2>&1 || true
-  /bin/rm -rf "$HOME/Library/Application Support/StepBar" \
-    "$HOME/Library/Preferences/local.stepbar.app.plist" \
-    "$HOME/Library/Caches/local.stepbar.app" \
-    "$HOME/Library/Saved Application State/local.stepbar.app.savedState"
-
-  extension="$HOME/Downloads/StepBar-browser-extension"
-  if [ ! -L "$extension" ] && [ -f "$extension/.stepbar-managed" ]; then
-    /bin/rm -rf "$extension"
-  fi
-  echo "StepBar 已卸载。请在 chrome://extensions 手动移除 StepBar 扩展。"
-)
+/bin/zsh "$HOME/Library/Application Support/StepBar/uninstall.sh"
 ```
 
-最后打开 **`chrome://extensions` → StepBar for Chrome → 移除**。命令不会修改 Chrome 历史、用户资料或其他扩展。
+输入 **YES** 确认后，工具会退出 StepBar，删除应用、本机记忆、设置、缓存、专用钥匙串密钥和应用导出的扩展目录。**删除不可撤销。**
 
-非标准位置的应用需手动移入废纸篓；权限不足时手动移除应用并重试，不需要全局关闭安全保护，也不建议给整段命令加 `sudo`。上述命令只卸载 StepBar，不清理旧 IntentBar。
+最后打开 **`chrome://extensions` → StepBar for Chrome → 移除**。Chrome 历史、用户资料和其他扩展不受影响。
 
-**源码、项目构建产物、`config.local.json` 和发布签名证书会保留。** 开发者不再需要源码配置或仓库中的 `browser-extension/pairing.json` 时，请自行删除这些私有文件；不要把含模型 Key 或配对码的文件上传。只把 `.app` 移到废纸篓不会清除记忆与密钥。
+源码和 `config.local.json` 会保留；后者可能包含自行配置的 Key，不再需要时请自行删除。只把 `.app` 移到废纸篓不会清除记忆与密钥。
+
+> 此卸载工具已纳入 v0.1.2 源码；已发布的 v0.1.1 安装包尚未包含，需等待新版安装包发布。
 
 ## 使用
 
@@ -303,5 +266,3 @@ v0.1.1 会将可加载的扩展准备到下载目录；再次点击可刷新文�
 ## 许可
 
 本项目为 Hackathon 作品，暂未附带开源许可证。
-
-当前限制：联网摘要可能不完整，模型生成的目标地址仍可能失效；部分站点需要登录。官方语音已通过三段合成语音的真实转写与本地搜索测试；麦克风权限、按键录音与自定义真实语音服务仍需现场验收。发布后的源码修复了中文语音省略空格时的站内搜索，现有 v0.1.0 安装包不包含此修复。

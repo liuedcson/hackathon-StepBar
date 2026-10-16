@@ -5,7 +5,7 @@ import pathlib, shutil, subprocess, os, signal, sys
 root = pathlib.Path(__file__).resolve().parents[1]
 home = pathlib.Path.home()
 targets = [root / '.build', root / 'build', root / 'browser-extension/pairing.json',
-           home / 'Library/Application Support/StepBar', home / 'Library/Application Support/IntentBar',
+           home / 'Library/Application Support/StepBar',
            home / 'Library/Preferences/local.stepbar.app.plist',
             home / 'Library/Caches/local.stepbar.app', home / 'Library/Saved Application State/local.stepbar.app.savedState']
 extension = home / 'Downloads/StepBar-browser-extension'
@@ -13,12 +13,12 @@ extension = home / 'Downloads/StepBar-browser-extension'
 if not extension.is_symlink() and (extension / '.stepbar-managed').is_file():
     targets.append(extension)
 for base in [pathlib.Path('/Applications'), home / 'Applications']:
-    for name in ['StepBar.app', 'IntentBar.app']:
+    for name in ['StepBar.app']:
         app = base / name
         if app.exists():
             import plistlib
             info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
-            if info.get('CFBundleIdentifier') not in ['local.stepbar.app', 'local.intentbar.app']:
+            if info.get('CFBundleIdentifier') != 'local.stepbar.app':
                 raise SystemExit('Application identity mismatch; refusing cleanup')
             targets.append(app)
 if '--confirm' not in sys.argv:
@@ -28,11 +28,11 @@ if '--confirm' not in sys.argv:
     raise SystemExit(0)
 for row in subprocess.check_output(['ps', '-axo', 'pid,comm'], text=True).splitlines():
     fields = row.strip().split(None, 1)
-    if len(fields) == 2 and fields[1].endswith(('/StepBar.app/Contents/MacOS/StepBar', '/IntentBar.app/Contents/MacOS/IntentBar')):
+    if len(fields) == 2 and fields[1].endswith('/StepBar.app/Contents/MacOS/StepBar'):
         os.kill(int(fields[0]), signal.SIGTERM)
 subprocess.run(['osascript', '-e', 'delay 2'], check=True)
 # Delete only credentials belonging to this app, including the legacy app service.
-for service in ['local.stepbar.ai', 'local.intentbar.ai']:
+for service in ['local.stepbar.ai']:
     for _ in range(100):
         found = subprocess.run(['security', 'find-generic-password', '-s', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if found.returncode == 44: break  # errSecItemNotFound

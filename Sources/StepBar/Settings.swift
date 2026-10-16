@@ -4,15 +4,11 @@ import Security
 struct Settings: Codable, Equatable {
     var localConfigPath: String?
     static let stepPlan = "https://api.stepfun.com/step_plan/v1"
-    // ~/Library/Application Support/StepBar; data from before the rename (IntentBar) moves over on first use.
+    // Local settings and memory live in ~/Library/Application Support/StepBar.
     static let folder: URL = {
         if let demo = Demo.folder { try? FileManager.default.createDirectory(at: demo, withIntermediateDirectories: true); return demo }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let folder = base.appendingPathComponent("StepBar"), legacy = base.appendingPathComponent("IntentBar")
-        if !FileManager.default.fileExists(atPath: folder.path), FileManager.default.fileExists(atPath: legacy.path) {
-            try? FileManager.default.moveItem(at: legacy, to: folder)
-        }
-        return folder
+        return base.appendingPathComponent("StepBar")
     }()
     var aiEnabled = true
     var baseURL = Settings.stepPlan
@@ -95,13 +91,12 @@ struct Settings: Codable, Equatable {
 }
 
 enum Keychain {
-    private static let service = "local.stepbar.ai", legacyService = "local.intentbar.ai"
+    private static let service = "local.stepbar.ai"
     static func query(_ account: String, service: String = service) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
     static func read(_ account: String) -> String {
-        let current = read(account, service: service)
-        return current.isEmpty ? read(account, service: legacyService) : current
+        read(account, service: service)
     }
     static func read(_ account: String, service: String) -> String {
         var q = query(account, service: service)

@@ -174,6 +174,7 @@ import SwiftUI
     }
     // Lets the unpacked extension pair itself; the file is git-ignored and only readable by the extension.
     func writePairing() {
+        prepareUninstaller()
         let target = Settings.folder.appendingPathComponent("browser-extension")
         if let bundled = Bundle.main.resourceURL?.appendingPathComponent("browser-extension"), FileManager.default.fileExists(atPath: bundled.appendingPathComponent("manifest.json").path) {
             do {
@@ -226,6 +227,18 @@ import SwiftUI
             NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
         }
         status = "扩展已准备到下载目录的 StepBar-browser-extension。Chrome → 开发者模式 → 加载已解压的扩展程序，选择该文件夹；安装后请勿删除或移动。"
+    }
+    private func prepareUninstaller() {
+        guard Bundle.main.bundleURL.pathExtension == "app",
+              let script = Bundle.main.url(forResource: "uninstall", withExtension: "sh") else { return }
+        do {
+            let folder = Settings.folder
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let target = folder.appendingPathComponent("uninstall.sh")
+            try Data(contentsOf: script).write(to: target, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: target.path)
+            try Data(Bundle.main.bundleURL.path.utf8).write(to: folder.appendingPathComponent("app-location.txt"), options: .atomic)
+        } catch { status = "卸载工具准备失败：\(error.localizedDescription)" }
     }
     func togglePause() {
         paused.toggle(); stopJobs()

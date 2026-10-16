@@ -10,6 +10,7 @@ cp .build/release/StepBar "$app_path/Contents/MacOS/StepBar"
 mkdir -p "$app_path/Contents/Resources/browser-extension"
 for file in manifest.json background.js options.html options.js; do cp "browser-extension/$file" "$app_path/Contents/Resources/browser-extension/$file"; done
 cp scripts/install-update.sh "$app_path/Contents/Resources/install-update.sh"
+cp scripts/uninstall.sh "$app_path/Contents/Resources/uninstall.sh"
 # App icon: the StepFun mark, drawn by the app itself (Brand.swift).
 iconset=$(mktemp -d)/AppIcon.iconset
 .build/release/StepBar --make-icon "$iconset"
@@ -28,8 +29,8 @@ cat > "$app_path/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>NSHumanReadableCopyright</key><string>Powered by StepFun 阶跃星辰 · Step Plan</string>
 <key>CFBundleExecutable</key><string>StepBar</string>
-<key>CFBundleVersion</key><string>2</string>
-<key>CFBundleShortVersionString</key><string>0.1.1</string>
+<key>CFBundleVersion</key><string>3</string>
+<key>CFBundleShortVersionString</key><string>0.1.2</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -49,8 +50,7 @@ else
   codesign --force --sign - "$app_path"
 fi
 mkdir -p browser-extension
-token=$(/usr/bin/plutil -extract bridgeToken raw -o - "$HOME/Library/Application Support/StepBar/settings.json" 2>/dev/null \
-  || /usr/bin/plutil -extract bridgeToken raw -o - "$HOME/Library/Application Support/IntentBar/settings.json" 2>/dev/null || true)
+token=$(/usr/bin/plutil -extract bridgeToken raw -o - "$HOME/Library/Application Support/StepBar/settings.json" 2>/dev/null || true)
 if [[ -n "$token" ]]; then
   printf '{"token":"%s"}\n' "$token" > browser-extension/pairing.json
 fi
