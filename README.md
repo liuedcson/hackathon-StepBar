@@ -18,22 +18,53 @@ StepBar 的愿景是成为 **macOS 生态级的工作伙伴**：连接你授权�
 
 这一版验证的是愿景里的基础闭环：**获取上下文 → 理解用途 → 学习路径 → 推荐入口 → 从选择中继续学习**。目前不读取其他应用或本地文件，不截图、不读屏幕；跨应用 MCP、工作路径组合和跨应用下一步预测均属于后续规划，不是当前已交付能力。
 
-![StepBar 面板](docs/assets/panel.png)
+<p align="center">
+  <img src="docs/assets/panel.png" alt="StepBar 搜索面板" width="880">
+</p>
 
 ## 效果演示
 
 以下演示都是在真实 Chrome 中录制的，未修改结果内容。
 
-| 联网获取最新信息：直达官方仓库 | 点名站点：直接站内搜索 |
-|---|---|
-| ![kimicode github](docs/assets/kimicode.gif) | ![小红书](docs/assets/xhs.gif) |
-| 输入 `kimicode github`。StepBar 从联网摘要里摘出官方地址，直接打开 `github.com/MoonshotAI/kimi-code`。 | `小红书 国庆去哪里玩`：从没在小红书搜过也能构造站内搜索地址。目标站点可能要求登录。 |
-| **一句话提问：知乎搜索** | **语义匹配：换个说法也能找回** |
-| ![知乎](docs/assets/zhihu.gif) | ![阶跃 api 是啥](docs/assets/semantic.gif) |
-| `大模型会不会让程序员失业 知乎`：去掉站名，只把问题带进知乎搜索。 | `阶跃 api 是啥`：标题里没有这几个字，靠后台为页面写的用途和关键词，找回看过的「基本概念」文档。 |
-| **越用越懂你** | |
-| ![学到的选择](docs/assets/learned.gif) | |
-| 只输入 `deeps`，直接给出上次选过的 DeepSeek GitHub 搜索页。 | |
+### 联网获取最新信息，直达官方仓库
+
+输入 `kimicode github`，从联网摘要中找到官方地址，直接打开 `github.com/MoonshotAI/kimi-code`，而不是一篇转载文章。
+
+<p align="center">
+  <img src="docs/assets/kimicode.gif" alt="真实演示：联网直达 Kimi Code 官方仓库" width="880">
+</p>
+
+### 点名站点，直接搜索
+
+`小红书 国庆去哪里玩`：即使没在这个站点搜过，也能构造站内搜索地址。目标站点可能要求登录。
+
+<p align="center">
+  <img src="docs/assets/xhs.gif" alt="真实演示：直接进入小红书站内搜索" width="880">
+</p>
+
+### 一句话，把问题带到知乎
+
+`大模型会不会让程序员失业 知乎`：去掉站名，只把问题带进知乎搜索。
+
+<p align="center">
+  <img src="docs/assets/zhihu.gif" alt="真实演示：一句话进入知乎搜索" width="880">
+</p>
+
+### 换个说法，也能找回
+
+`阶跃 api 是啥`：标题里没有这些词，靠后台为页面写好的用途和关键词，找回看过的「基本概念」文档。
+
+<p align="center">
+  <img src="docs/assets/semantic.gif" alt="真实演示：通过页面用途找回文档" width="880">
+</p>
+
+### 记住你的选择，越用越懂你
+
+只输入 `deeps`，上次选过的 DeepSeek GitHub 搜索页直接出现。熟悉的路径，不必每次重新寻找。
+
+<p align="center">
+  <img src="docs/assets/learned.gif" alt="真实演示：已学习的选择优先出现" width="880">
+</p>
 
 ## 当前版本的工作方式
 
@@ -110,16 +141,22 @@ open build/StepBar.app
 
 ## 使用
 
-| 操作 | 说明 |
-|---|---|
-| ⌘M | 唤起或关闭面板 |
-| 输入 | 实时显示本机结果，停顿后 ✦ Step 结果置顶 |
-| 按住 ⌥ | 说话输入，由 `stepaudio-2.5-asr` 转写 |
-| ↑ ↓ / ↩ | 选择 / 打开；已打开的页面切换到原标签页 |
-| ⌘1–9 | 直接打开第 N 项 |
-| Tab | 让 Step 再生成一次动作 |
-| ⌘⌫ | 关闭选中的标签页 |
-| Esc | 先清空输入，再按一次关闭面板 |
+**唤起与输入**
+
+- **⌘M** — 唤起或关闭面板。
+- **输入** — 本机结果实时出现，停顿后 ✦ Step 结果置顶。
+- **按住 ⌥** — 使用已配置的语音服务说话输入；官方默认由 `stepaudio-2.5-asr` 转写。
+
+**选择与打开**
+
+- **↑ ↓ / ↩** — 选择并打开；已打开的页面切换到原标签页。
+- **⌘1–9** — 直接打开第 N 项。
+- **Tab** — 让 Step 再生成一次动作。
+
+**退出与整理**
+
+- **⌘⌫** — 关闭选中的标签页。
+- **Esc** — 先清空输入，再按一次关闭面板。
 
 不输入直接 ⌘M 时，显示和剪贴板相关的建议以及最近的页面。
 
