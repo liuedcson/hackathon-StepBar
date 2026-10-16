@@ -42,6 +42,33 @@ import Foundation
         return buffer.take()
     }
 
+    nonisolated static func wav(_ pcm: Data) -> Data {
+        var data = Data()
+        func word(_ value: UInt32, bytes: Int = 4) { for i in 0..<bytes { data.append(UInt8((value >> (i * 8)) & 255)) } }
+        data.append(Data("RIFF".utf8)); word(UInt32(pcm.count + 36)); data.append(Data("WAVEfmt ".utf8))
+        word(16); word(1, bytes: 2); word(1, bytes: 2); word(16000); word(32000); word(2, bytes: 2); word(16, bytes: 2)
+        data.append(Data("data".utf8)); word(UInt32(pcm.count)); data.append(pcm)
+        return data
+    }
+    nonisolated static func transcriptionRequest(_ pcm: Data, configuration: AIConfiguration) throws -> URLRequest {
+        guard !configuration.modelID.isEmpty, !configuration.modelID.contains(where: { $0.isNewline }) else { throw AIError(message: "请配置语音 Model ID") }
+        var request = URLRequest(url: try WebSearch.serviceURL(configuration.baseURL), timeoutInterval: 30)
+        let boundary = "StepBar-\(UUID().uuidString)"
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if !configuration.apiKey.isEmpty { request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization") }
+        var body = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n\(configuration.modelID)\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"response_format\"\r\n\r\njson\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n".utf8)
+        body.append(wav(pcm)); body.append(Data("\r\n--\(boundary)--\r\n".utf8)); request.httpBody = body
+        return request
+    }
+    static func transcribeOpenAI(_ pcm: Data, configuration: AIConfiguration, session: URLSession? = nil) async throws -> String {
+        guard pcm.count > 8000 else { throw AIError(message: "录音太短") }
+        let client = session ?? AIClient(timeout: 30).session
+        let (data, response) = try await client.data(for: transcriptionRequest(pcm, configuration: configuration))
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), data.count < 1_000_000 else { throw AIError(message: "自定义语音服务请求失败") }
+        struct Transcript: Decodable { var text: String }
+        return try JSONDecoder().decode(Transcript.self, from: data).text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     static func transcribe(_ pcm: Data, configuration: AIConfiguration, partial: @escaping @MainActor (String) -> Void) async throws -> String {
         guard pcm.count > 16000 / 2 else { throw AIError(message: "录音太短") }
         guard var parts = URLComponents(string: configuration.baseURL), parts.scheme == "https" else { throw AIError(message: "语音识别需要 HTTPS 地址") }

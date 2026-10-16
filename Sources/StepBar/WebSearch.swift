@@ -12,6 +12,30 @@ struct WebResult: Codable, Equatable {
 // Only the query is sent: never the clipboard, page text or history.
 enum WebSearch {
     static let count = 5
+    // Validate an explicitly configured service URL without silently adding any provider-specific path.
+    static func serviceURL(_ endpoint: String) throws -> URL {
+        _ = try AIClient.endpoint(endpoint)
+        guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)) else { throw AIError(message: "服务地址无效") }
+        return url
+    }
+    static func engineItem(_ query: String, template: String) -> SearchItem? {
+        guard allows(query), template.components(separatedBy: "{query}").count == 2,
+              let encoded = query.addingPercentEncoding(withAllowedCharacters: CharacterSet.alphanumerics),
+              let url = Inference.safeURL(template.replacingOccurrences(of: "{query}", with: encoded)) else { return nil }
+        return SearchItem(id: SearchItem.urlID(url.absoluteString), kind: .action, title: "在 \(url.host ?? "搜索引擎") 搜索「\(query)」", subtitle: SearchItem.short(url.absoluteString), url: url.absoluteString, note: "搜索引擎")
+    }
+    // Configurable JSON search gateway: POST {query,n}, Bearer key, {results:[{title,url,snippet,time?}]}.
+    static func customSearch(_ query: String, endpoint: String, apiKey: String, session: URLSession = WebSearch.session) async throws -> [WebResult] {
+        var request = URLRequest(url: try serviceURL(endpoint))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !apiKey.isEmpty { request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": query, "n": count])
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), data.count <= 1_000_000 else { throw AIError(message: "自定义搜索服务请求失败") }
+        struct Envelope: Decodable { var results: [WebResult] }
+        return cleaned(try JSONDecoder().decode(Envelope.self, from: data).results)
+    }
     // Not worth a public search: recalling a page seen before, a typed link, or text with an id or a secret in it.
     static func allows(_ query: String) -> Bool {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -49,7 +49,7 @@ struct LauncherView: View {
                     }
                     Hairline()
                     HStack {
-                        Text("↩ 打开  ⌘1–9 直达  按住⌥ 说话  Tab 让 Step 生成  ⌘⌫ 关标签页")
+                        Text("↩ 打开  ⌘1–9 直达  \(store.settings.voiceAvailable ? "按住⌥ 说话  " : "")Tab 让 Step 生成  ⌘⌫ 关标签页")
                         Spacer()
                         Text("阶跃星辰 \(store.launcherModel) · \(store.settings.hotkeyLabel)")
                     }.font(.caption2).foregroundStyle(.tertiary).padding(.horizontal, 14).padding(.vertical, 7)
@@ -108,6 +108,10 @@ struct SettingsView: View {
     @State private var clearKey = false
     @State private var foregroundKey = ""
     @State private var clearForegroundKey = false
+    @State private var searchKey = ""
+    @State private var voiceKey = ""
+    @State private var clearSearchKey = false
+    @State private var clearVoiceKey = false
     var body: some View {
         ScrollView {
             Form {
@@ -116,7 +120,7 @@ struct SettingsView: View {
                     Picker("配置模式", selection: $draft.aiProvider) {
                         Text("官方 · StepFun Step Plan").tag("stepPlan")
                         Text("自定义 · OpenAI 兼容协议").tag("custom")
-                    }.onChange(of: draft.aiProvider) { _ in key = ""; foregroundKey = ""; clearKey = false; clearForegroundKey = false }
+                    }.onChange(of: draft.aiProvider) { _ in key = ""; foregroundKey = ""; searchKey = ""; voiceKey = ""; clearKey = false; clearForegroundKey = false; clearSearchKey = false; clearVoiceKey = false }
                     if draft.isCustom {
                         Text("后台记忆 · 页面理解与网址模式").font(.headline)
                         TextField("后台 Base URL", text: $draft.customBackgroundURL)
@@ -129,7 +133,30 @@ struct SettingsView: View {
                         SecureField("前台 API Key（留空保留）", text: $foregroundKey)
                         Toggle("删除前台 API Key", isOn: $clearForegroundKey)
                         Toggle("请求 JSON 输出模式（服务支持时开启）", isOn: $draft.jsonMode)
-                        Text("两个服务独立配置。填写 OpenAI Chat Completions Base URL（通常以 /v1 结尾）。自定义服务不发送 Step 专用推理参数。联网搜索和语音仍需要另行保存的官方 Step Plan Key，绝不使用自定义密钥调用。") .font(.caption)
+                        Text("两个服务独立配置。填写 OpenAI Chat Completions Base URL（通常以 /v1 结尾）。自定义模式不会调用 Step Plan，包括搜索和语音。") .font(.caption)
+                        Picker("联网搜索", selection: $draft.customSearchMode) {
+                            Text("不启用").tag("disabled")
+                            Text("搜索引擎入口（Bing 等）").tag("engine")
+                            Text("自定义搜索 JSON API").tag("api")
+                        }
+                        if draft.customSearchMode == "engine" {
+                            TextField("搜索网址模板，使用 {query}", text: $draft.searchEngineTemplate)
+                            Text("默认 Bing。仅在结果列表提供入口，点击才打开；不会抓取搜索页，也不作为模型最新信息。") .font(.caption)
+                        }
+                        if draft.customSearchMode == "api" {
+                            TextField("搜索 API 完整 URL", text: $draft.customSearchURL)
+                            SecureField("搜索 API Key（独立，留空保留）", text: $searchKey)
+                            Toggle("删除搜索 API Key", isOn: $clearSearchKey)
+                            Text("POST JSON {query,n}，Bearer 鉴权；响应 {results:[{title,url,snippet,time?}]}。需使用兼容此格式的搜索服务或网关，不是 Bing 搜索网页地址。结果会作为前台模型上下文。") .font(.caption)
+                        }
+                        Toggle("启用自定义语音转写（默认关闭）", isOn: $draft.customVoiceEnabled)
+                        if draft.customVoiceEnabled {
+                            TextField("语音完整 URL（例如 …/v1/audio/transcriptions）", text: $draft.customVoiceURL)
+                            TextField("语音 Model ID", text: $draft.customVoiceModel)
+                            SecureField("语音 API Key（独立，留空保留）", text: $voiceKey)
+                            Toggle("删除语音 API Key", isOn: $clearVoiceKey)
+                            Text("OpenAI 兼容音频转写：multipart WAV + model，返回 {text}。服务不支持此协议时请保持关闭；未配置不录音、不申请麦克风权限。") .font(.caption)
+                        }
                     } else {
                         Text("官方地址：\(Settings.stepPlan)").font(.caption)
                         TextField("后台记忆 Model ID", text: $draft.modelID)
@@ -141,10 +168,10 @@ struct SettingsView: View {
                         .font(.caption)
                     Toggle("空闲时让后台模型理解浏览过的页面和网址结构", isOn: $draft.background)
                     Toggle("唤起搜索时先联网搜索一次输入的词，作为第三层的最新信息", isOn: $draft.webSearch)
-                    Text("后台会把页面标题、网址和正文摘录（每页最多 300 字）发给配置的后台模型；输入、剪贴板、当前标签页、本机预筛出的候选和联网结果发给配置的前台模型。联网搜索仅向官方 Step Plan 发送输入的词，回忆类输入、链接和含订单号/ID 的输入不联网。个人信息会先打码，带敏感参数的网址不发送。API Key 仅保存在本机配置或钥匙串。")
+                    Text("后台向配置的后台模型发送页面信息；前台向配置的前台模型发送输入、剪贴板、候选及联网结果。搜索只发送输入的词，不含剪贴板。回忆、链接、订单号/ID 不联网。个人信息先打码，带敏感参数的网址不发送。各服务密钥独立，仅保存在本机配置或钥匙串。")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        Button("保存设置") { store.saveSettings(draft, key: key, clearKey: clearKey, foregroundKey: foregroundKey, clearForegroundKey: clearForegroundKey); key = ""; foregroundKey = ""; clearKey = false; clearForegroundKey = false }
+                        Button("保存设置") { store.saveSettings(draft, key: key, clearKey: clearKey, foregroundKey: foregroundKey, clearForegroundKey: clearForegroundKey, searchKey: searchKey, clearSearchKey: clearSearchKey, voiceKey: voiceKey, clearVoiceKey: clearVoiceKey); key = ""; foregroundKey = ""; searchKey = ""; voiceKey = ""; clearKey = false; clearForegroundKey = false; clearSearchKey = false; clearVoiceKey = false }
                         Button(store.testingAI ? "测试中…" : "测试已保存的 AI 配置") { store.testAI() }.disabled(store.testingAI)
                     }
                     Text(store.aiStatus).font(.caption).textSelection(.enabled)

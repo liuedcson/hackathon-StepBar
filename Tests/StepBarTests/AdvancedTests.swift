@@ -198,6 +198,12 @@ extension InferenceTests {
     }
     func testWebSearch() async throws {
         var settings = Settings()
+        settings.aiProvider = "custom"
+        XCTAssertEqual(settings.customSearchMode, "disabled")
+        XCTAssertEqual(settings.voiceAvailable, false)
+        settings.customVoiceEnabled = true
+        XCTAssertEqual(settings.voiceAvailable, false)
+        settings.aiProvider = "stepPlan"
         XCTAssertEqual(settings.backgroundURL, Settings.stepPlan)
         XCTAssertEqual(settings.foregroundModel, "step-3.7-flash")
         settings.aiProvider = "custom"
@@ -272,6 +278,31 @@ extension InferenceTests {
         MockProtocol.handler = { _ in (500, Data()) }
         do { _ = try await WebSearch.search("x y", configuration: AIConfiguration(baseURL: Settings.stepPlan, modelID: "m", apiKey: "k"), session: URLSession(configuration: config)); preconditionFailure("HTTP error accepted") } catch {}
         MockProtocol.handler = nil
+        let pcm = Data(repeating: 0, count: 16000)
+        let voiceConfig = AIConfiguration(baseURL: "https://voice.example/v1/audio/transcriptions", modelID: "asr-model", apiKey: "test-voice-only-key")
+        let voiceRequest = try VoiceInput.transcriptionRequest(pcm, configuration: voiceConfig)
+        XCTAssertEqual(voiceRequest.url?.path, "/v1/audio/transcriptions")
+        XCTAssertEqual(voiceRequest.value(forHTTPHeaderField: "Authorization"), "Bearer test-voice-only-key")
+        XCTAssertEqual(String(decoding: VoiceInput.wav(pcm).prefix(4), as: UTF8.self), "RIFF")
+        XCTAssertEqual(VoiceInput.wav(pcm).count, pcm.count + 44)
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/custom/search")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-search-only-key")
+            return (200, Data("{\"results\":[{\"title\":\"Result\",\"url\":\"https://example.com/page\",\"snippet\":\"Public result\"}]}".utf8))
+        }
+        let customResults = try await WebSearch.customSearch("public query", endpoint: "https://search.example/custom/search", apiKey: "test-search-only-key", session: URLSession(configuration: config))
+        XCTAssertEqual(customResults.first?.title, "Result")
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/audio/transcriptions")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-voice-only-key")
+            return (200, Data("{\"text\":\"hello\"}".utf8))
+        }
+        let transcript = try await VoiceInput.transcribeOpenAI(pcm, configuration: voiceConfig, session: URLSession(configuration: config))
+        XCTAssertEqual(transcript, "hello")
+        MockProtocol.handler = nil
+        let bing = WebSearch.engineItem("swift & rust", template: Settings().searchEngineTemplate)
+        XCTAssertEqual(URLComponents(string: bing!.url!)?.queryItems?.first?.value, "swift & rust")
+        XCTAssertNil(WebSearch.engineItem("hello", template: "https://example.com/{query}/{query}"))
         var web = WebSearch.items(cleaned)[0]; web.layer = "联网结果"
         XCTAssertEqual(Assistant.describe(web).hasPrefix("[联网结果·网页]"), true)
         XCTAssertEqual(Assistant.describe(web).contains("摘要：开源"), true)

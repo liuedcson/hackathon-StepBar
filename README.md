@@ -62,7 +62,8 @@ open build/StepBar.app
 - **官方 · StepFun Step Plan**：地址固定为官方 Step Plan；后台记忆和前台检索的 Model ID 分别填写，共用一个 Step Plan Key。
 - **自定义 · OpenAI 兼容协议**：后台记忆、前台检索分别填写 Base URL、Model ID 和 API Key，可使用不同服务。Base URL 通常以 `/v1` 结尾，也可填写完整 `/chat/completions` 地址；本机服务支持 HTTP，其他地址要求 HTTPS。
 - API Key 留空保留已保存值；可以单独删除。保存后立即生效，点击「测试已保存的 AI 配置」会分别测试后台和前台，不发送浏览历史。
-- 联网搜索和语音是官方 Step Plan 专用接口，使用另行保存的 Step Plan Key；自定义服务的密钥不会发给它们。没有官方 Key 时跳过联网搜索，语音提示配置，其他检索功能仍可用。
+- 官方模式的搜索和语音使用 Step Plan；**自定义模式完全不调用 Step Plan**。自定义搜索默认关闭，可选择 Bing 等搜索引擎入口（仅点击后打开，不提供模型上下文），或配置独立的搜索 JSON API（完整 URL、独立 Key，POST `{query,n}`，返回 `{results:[{title,url,snippet,time?}]}`）。
+- 自定义语音默认关闭。需要时配置 OpenAI 兼容音频转写接口的完整 URL（如 `https://asr.example/v1/audio/transcriptions`）、Model ID 和独立 Key。发送 multipart WAV，返回 `{text}`。未启用或未配置完整时不录音、不请求麦克风权限；不支持此协议的服务请保持关闭。
 
 自定义模式不发送 Step 专用推理参数；支持 JSON 输出的服务可开启「请求 JSON 输出模式」。官方和自定义配置分别保留，切换模式不会覆盖另一套 Key。
 

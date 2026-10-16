@@ -8,6 +8,9 @@ struct ConfigurationInput: Codable {
     var quick: Summary?
     var customSummary: Summary?
     var customQuick: Summary?
+    struct Service: Codable { var endpoint: String; var apiKey: String; var modelID: String? }
+    var customSearch: Service?
+    var customVoice: Service?
 }
 enum RuntimeChecks {
     static var settingsPath: URL {
@@ -41,6 +44,16 @@ enum RuntimeChecks {
         let file = localConfig(settings)
         let local = [file?.quick, file?.summary].compactMap { $0 }.first { $0.baseURL == Settings.stepPlan && !$0.apiKey.isEmpty }
         return AIConfiguration(baseURL: Settings.stepPlan, modelID: "step-3.7-flash", apiKey: local?.apiKey ?? Keychain.read("openAI:\(Settings.stepPlan)"))
+    }
+    static func searchKey(_ settings: Settings) -> String {
+        let local = localConfig(settings)?.customSearch
+        return local?.endpoint == settings.customSearchURL ? local?.apiKey ?? "" : Keychain.read(settings.searchAccount)
+    }
+    static func voiceConfiguration(_ settings: Settings) -> AIConfiguration {
+        guard settings.isCustom else { return stepPlanConfiguration(settings) }
+        let local = localConfig(settings)?.customVoice
+        let key = local?.endpoint == settings.customVoiceURL ? local?.apiKey ?? "" : Keychain.read(settings.voiceAccount)
+        return AIConfiguration(baseURL: settings.customVoiceURL, modelID: settings.customVoiceModel, apiKey: key)
     }
     static func writeLocal(_ input: ConfigurationInput, path: String) throws {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -127,8 +140,16 @@ extension RuntimeChecks {
         return Layers(pool: Understand.enrich(data.history, notes: data.memory.notes), memory: data.memory, entries: entries, searchPages: data.searches)
     }
     static func webItems(_ query: String, settings: Settings) async -> [SearchItem] {
-        let config = stepPlanConfiguration(settings)
-        guard settings.webSearch, !config.apiKey.isEmpty, WebSearch.allows(query), let found = try? await WebSearch.search(query, configuration: config) else { return [] }
+        guard settings.webSearch, WebSearch.allows(query) else { return [] }
+        let found: [WebResult]
+        if settings.isCustom {
+            guard settings.customSearchMode == "api", let result = try? await WebSearch.customSearch(query, endpoint: settings.customSearchURL, apiKey: searchKey(settings)) else { return [] }
+            found = result
+        } else {
+            let config = stepPlanConfiguration(settings)
+            guard !config.apiKey.isEmpty, let result = try? await WebSearch.search(query, configuration: config) else { return [] }
+            found = result
+        }
         return WebSearch.items(found).map { var item = $0; item.layer = "联网结果"; return item }
     }
     static func ms(_ start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }

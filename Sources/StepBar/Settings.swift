@@ -24,6 +24,12 @@ struct Settings: Codable, Equatable {
     var customBackgroundModel = ""
     var customForegroundURL = ""
     var customForegroundModel = ""
+    var customSearchMode = "disabled"
+    var customSearchURL = ""
+    var searchEngineTemplate = "https://www.bing.com/search?q={query}"
+    var customVoiceEnabled = false
+    var customVoiceURL = ""
+    var customVoiceModel = ""
     var jsonMode = false
     // Let the background model study pages and URL patterns while the Mac is idle on power.
     var background = true
@@ -36,7 +42,7 @@ struct Settings: Codable, Equatable {
     var bridgeToken = UUID().uuidString
     var hotkey = "commandM"
     init() {}
-    enum CodingKeys: String, CodingKey { case aiEnabled, baseURL, modelID, aiProvider, quickModelID, customBackgroundURL, customBackgroundModel, customForegroundURL, customForegroundModel, jsonMode, background, webSearch, excludedSites, retentionDays, browserBridge, bridgeToken, hotkey, localConfigPath }
+    enum CodingKeys: String, CodingKey { case aiEnabled, baseURL, modelID, aiProvider, quickModelID, customBackgroundURL, customBackgroundModel, customForegroundURL, customForegroundModel, customSearchMode, customSearchURL, searchEngineTemplate, customVoiceEnabled, customVoiceURL, customVoiceModel, jsonMode, background, webSearch, excludedSites, retentionDays, browserBridge, bridgeToken, hotkey, localConfigPath }
     enum Legacy: String, CodingKey { case autoSummarize, excludedApps }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self), old = try decoder.container(keyedBy: Legacy.self)
@@ -50,6 +56,12 @@ struct Settings: Codable, Equatable {
         customBackgroundModel = try c.decodeIfPresent(String.self, forKey: .customBackgroundModel) ?? (aiProvider == "custom" ? modelID : "")
         customForegroundURL = try c.decodeIfPresent(String.self, forKey: .customForegroundURL) ?? customBackgroundURL
         customForegroundModel = try c.decodeIfPresent(String.self, forKey: .customForegroundModel) ?? customBackgroundModel
+        customSearchMode = try c.decodeIfPresent(String.self, forKey: .customSearchMode) ?? "disabled"
+        customSearchURL = try c.decodeIfPresent(String.self, forKey: .customSearchURL) ?? ""
+        searchEngineTemplate = try c.decodeIfPresent(String.self, forKey: .searchEngineTemplate) ?? "https://www.bing.com/search?q={query}"
+        customVoiceEnabled = try c.decodeIfPresent(Bool.self, forKey: .customVoiceEnabled) ?? false
+        customVoiceURL = try c.decodeIfPresent(String.self, forKey: .customVoiceURL) ?? ""
+        customVoiceModel = try c.decodeIfPresent(String.self, forKey: .customVoiceModel) ?? ""
         jsonMode = try c.decodeIfPresent(Bool.self, forKey: .jsonMode) ?? false
         background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? old.decodeIfPresent(Bool.self, forKey: .autoSummarize) ?? true
         webSearch = try c.decodeIfPresent(Bool.self, forKey: .webSearch) ?? true
@@ -71,6 +83,9 @@ struct Settings: Codable, Equatable {
     var foregroundModel: String { isCustom ? customForegroundModel : quickModelID }
     var backgroundAccount: String { isCustom ? "openAI:background:\(backgroundURL.trimmingCharacters(in: .whitespacesAndNewlines))" : "openAI:\(Settings.stepPlan)" }
     var foregroundAccount: String { isCustom ? "openAI:foreground:\(foregroundURL.trimmingCharacters(in: .whitespacesAndNewlines))" : backgroundAccount }
+    var searchAccount: String { "openAI:search:\(customSearchURL.trimmingCharacters(in: .whitespacesAndNewlines))" }
+    var voiceAccount: String { "openAI:voice:\(customVoiceURL.trimmingCharacters(in: .whitespacesAndNewlines))" }
+    var voiceAvailable: Bool { !isCustom || (customVoiceEnabled && !customVoiceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !customVoiceModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
     func excludes(url: String) -> Bool {
         guard let host = URL(string: url)?.host?.lowercased() else { return false }
         return excludedDomains.contains { host == $0 || host.hasSuffix("." + $0) }

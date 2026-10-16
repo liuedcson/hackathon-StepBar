@@ -8,7 +8,7 @@ StepBar 是原生 Swift（AppKit + SwiftUI）菜单栏应用，没有第三方�
 
 官方模式固定 `https://api.stepfun.com/step_plan/v1`，默认后台 step-5-preview（high）、前台 step-3.7-flash（low）。自定义模式分别使用用户配置，不发送 `reasoning_effort`；JSON 模式可选。保存时校验两个端点和 Model ID，清空当前请求上下文与联网缓存，新设置立即生效。
 
-联网搜索和语音独立使用 `stepPlanConfiguration`，仅从官方配置读取 Key，绝不使用自定义服务的凭据。缺少官方 Key 时不发联网请求，语音给出配置提示。设置中的连接测试分别测试两组服务，仅发送合成测试文本。
+官方搜索和语音使用 `stepPlanConfiguration`。自定义模式完全独立：搜索默认关闭，可配置搜索引擎入口或 JSON API；API 请求 POST `{query,n}`，响应 `{results:[{title,url,snippet,time?}]}`，密钥独立。搜索引擎入口仅供用户点击，不伪称为模型的实时信息。语音默认关闭，启用后使用独立的 OpenAI 兼容 multipart 音频转写接口、Model ID 和 Key；16 kHz PCM 包装为 WAV，响应 `{text}`。未启用或未配置完整时不触发录音或麦克风权限。所有自定义请求禁止重定向，避免转发凭据。设置中的 AI 连接测试分别测试后台和前台，仅发送合成文本。
 
 ```
                     ┌──────────── 唤起时（前台，越快越好） ────────────┐

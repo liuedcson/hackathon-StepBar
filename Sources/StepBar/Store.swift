@@ -107,7 +107,7 @@ import SwiftUI
         launcherModel = settings.aiEnabled ? RuntimeChecks.quickConfiguration(settings).modelID : "未启用"
     }
     var aiDescription: String { settings.aiEnabled ? "后台理解 \(settings.backgroundModel) · 唤起 \(RuntimeChecks.quickConfiguration(settings).modelID)" : "模型未启用" }
-    func saveSettings(_ draft: Settings, key: String, clearKey: Bool, foregroundKey: String = "", clearForegroundKey: Bool = false) {
+    func saveSettings(_ draft: Settings, key: String, clearKey: Bool, foregroundKey: String = "", clearForegroundKey: Bool = false, searchKey: String = "", clearSearchKey: Bool = false, voiceKey: String = "", clearVoiceKey: Bool = false) {
         do {
             if draft.aiEnabled {
                 _ = try AIClient.endpoint(draft.backgroundURL)
@@ -115,6 +115,14 @@ import SwiftUI
             }
             if draft.aiEnabled && [draft.backgroundModel, draft.foregroundModel].contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { throw AIError(message: "请填写后台和前台 Model ID") }
             var updated = draft
+            if updated.isCustom {
+                if updated.customSearchMode == "api" { _ = try WebSearch.serviceURL(updated.customSearchURL) }
+                if updated.customSearchMode == "engine", WebSearch.engineItem("test", template: updated.searchEngineTemplate) == nil { throw AIError(message: "搜索引擎模板需要恰好一个 {query} 和安全网址") }
+                if updated.customVoiceEnabled {
+                    _ = try WebSearch.serviceURL(updated.customVoiceURL)
+                    guard !updated.customVoiceModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AIError(message: "请填写语音 Model ID") }
+                }
+            }
             updated.retentionDays = min(90, max(1, updated.retentionDays))
             let current = RuntimeChecks.summaryConfiguration(settings)
             let summaryKey = clearKey ? "" : !key.isEmpty ? key.trimmingCharacters(in: .whitespacesAndNewlines) : updated.backgroundAccount == settings.backgroundAccount ? current.apiKey : Keychain.read(updated.backgroundAccount)
@@ -126,13 +134,22 @@ import SwiftUI
                 let quick = ConfigurationInput.Summary(baseURL: updated.foregroundURL, modelID: updated.foregroundModel, apiKey: quickKey)
                 if updated.isCustom { input.customSummary = summary; input.customQuick = quick }
                 else { input.summary = summary; input.quick = quick }
+                if updated.isCustom {
+                    let savedSearch = clearSearchKey ? "" : !searchKey.isEmpty ? searchKey : updated.searchAccount == settings.searchAccount ? RuntimeChecks.searchKey(settings) : Keychain.read(updated.searchAccount)
+                    let savedVoice = clearVoiceKey ? "" : !voiceKey.isEmpty ? voiceKey : updated.voiceAccount == settings.voiceAccount ? RuntimeChecks.voiceConfiguration(settings).apiKey : Keychain.read(updated.voiceAccount)
+                    input.customSearch = .init(endpoint: updated.customSearchURL, apiKey: savedSearch)
+                    input.customVoice = .init(endpoint: updated.customVoiceURL, apiKey: savedVoice, modelID: updated.customVoiceModel)
+                }
                 try RuntimeChecks.writeLocal(input, path: path)
             } else {
                 if clearKey || !key.isEmpty { try Keychain.write(summaryKey, account: updated.backgroundAccount) }
                 if updated.isCustom && (clearForegroundKey || !foregroundKey.isEmpty) { try Keychain.write(quickKey, account: updated.foregroundAccount) }
+                if updated.isCustom && (clearSearchKey || !searchKey.isEmpty) { try Keychain.write(clearSearchKey ? "" : searchKey, account: updated.searchAccount) }
+                if updated.isCustom && (clearVoiceKey || !voiceKey.isEmpty) { try Keychain.write(clearVoiceKey ? "" : voiceKey, account: updated.voiceAccount) }
             }
             try JSONEncoder().encode(updated).write(to: settingsPath, options: .atomic)
             stopJobs()
+            if listening { _ = voice.stop(); listening = false }
             searchGeneration += 1; webCache = [:]; resetAI()
             settings = updated
             browserTabs = []; browserUpdated = .distantPast

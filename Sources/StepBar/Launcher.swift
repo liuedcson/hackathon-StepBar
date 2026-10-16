@@ -101,7 +101,10 @@ extension Store {
             sections.append(("直达", direct))
             sections.append(("历史匹配", Array(matches.prefix(6))))
             sections.append(("语义匹配", Array(semanticHits.prefix(5))))
-            if !Ranker.isLong(text) { sections.append(("网页", layers.siteSearchActions(text, general: Inference.recalling(text) ? 0 : 2).general + [layers.webSearch(text)].compactMap { $0 })) }
+            if !Ranker.isLong(text) {
+                let engine = settings.isCustom ? (settings.customSearchMode == "engine" ? WebSearch.engineItem(text, template: settings.searchEngineTemplate) : nil) : layers.webSearch(text)
+                sections.append(("网页", layers.siteSearchActions(text, general: Inference.recalling(text) ? 0 : 2).general + [engine].compactMap { $0 }))
+            }
         }
         var seen = Set<String>(), merged: [SearchItem] = []
         for (name, items) in sections {
@@ -152,12 +155,16 @@ extension Store {
     // One StepFun web search per distinct query; repeats come from memory. A failed search just leaves layer 3 without it.
     func webLookup(_ text: String) -> Task<[WebResult], Never>? {
         guard settings.webSearch, WebSearch.allows(text) else { return nil }
+        if settings.isCustom && settings.customSearchMode != "api" { return nil }
         let key = Semantic.normalize(text)
         if let cached = webCache[key] { return Task { cached } }
-        let config = RuntimeChecks.stepPlanConfiguration(settings)
-        guard !config.apiKey.isEmpty else { return nil }
+        let saved = settings
+        let config = saved.isCustom ? AIConfiguration(baseURL: "", modelID: "", apiKey: "") : RuntimeChecks.stepPlanConfiguration(settings)
+        if !saved.isCustom && config.apiKey.isEmpty { return nil }
+        let searchKey = saved.isCustom ? RuntimeChecks.searchKey(saved) : ""
         return Task { [weak self] in
-            guard let found = try? await WebSearch.search(text, configuration: config) else { return [] }
+            let result = saved.isCustom ? try? await WebSearch.customSearch(text, endpoint: saved.customSearchURL, apiKey: searchKey) : try? await WebSearch.search(text, configuration: config)
+            guard let found = result else { return [] }
             if let self { if self.webCache.count > 100 { self.webCache = [:] }; self.webCache[key] = found }
             return found
         }
@@ -210,7 +217,8 @@ extension Store {
 
     // MARK: Voice
     func startVoice() {
-        guard !listening else { return }
+        guard !listening, settings.voiceAvailable else { return }
+        if !settings.isCustom && RuntimeChecks.voiceConfiguration(settings).apiKey.isEmpty { intent = "请先配置 Step Plan Key"; return }
         listening = true; intent = "正在听…松开 ⌥ 结束"
         Task { [weak self] in
             guard let self else { return }
@@ -223,12 +231,13 @@ extension Store {
         listening = false
         let pcm = voice.stop()
         intent = "正在识别…"
-        let config = RuntimeChecks.stepPlanConfiguration(settings)
-        guard !config.apiKey.isEmpty else { intent = "语音需要官方 Step Plan API Key，请先在设置中保存。"; return }
+        let config = RuntimeChecks.voiceConfiguration(settings), custom = settings.isCustom
         Task { [weak self] in
             guard let self else { return }
             do {
-                let text = try await VoiceInput.transcribe(pcm, configuration: config) { partial in self.intent = "🎙 \(partial)" }
+                let text: String
+                if custom { text = try await VoiceInput.transcribeOpenAI(pcm, configuration: config) }
+                else { text = try await VoiceInput.transcribe(pcm, configuration: config) { partial in self.intent = "🎙 \(partial)" } }
                 self.intent = nil
                 if !text.isEmpty { self.query = text }
             } catch { self.intent = error.localizedDescription }
