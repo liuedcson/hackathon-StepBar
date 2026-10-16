@@ -5,7 +5,7 @@ import Foundation
 enum Study {
     static func configuration(_ settings: Settings) -> AIConfiguration {
         var config = RuntimeChecks.summaryConfiguration(settings)
-        config.reasoningEffort = ProcessInfo.processInfo.environment["STEPBAR_STUDY_EFFORT"] ?? "high"
+        if !settings.isCustom { config.reasoningEffort = ProcessInfo.processInfo.environment["STEPBAR_STUDY_EFFORT"] ?? "high" }
         return config
     }
     static let client = AIClient(timeout: 300)

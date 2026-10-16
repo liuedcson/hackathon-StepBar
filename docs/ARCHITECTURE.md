@@ -1,6 +1,14 @@
 # StepBar 技术实现
 
-StepBar 是原生 Swift（AppKit + SwiftUI）菜单栏应用，没有第三方依赖。数据来自 Chrome 历史数据库和一个本机配对的 Chrome 扩展，所有模型调用都走 StepFun Step Plan（`https://api.stepfun.com/step_plan/v1`，OpenAI 兼容协议，同一个 Key）。
+StepBar 是原生 Swift（AppKit + SwiftUI）菜单栏应用，没有第三方依赖。数据来自 Chrome 历史数据库和一个本机配对的 Chrome 扩展。默认模型调用走 StepFun Step Plan；设置中也支持后台记忆、前台检索独立配置 OpenAI 兼容服务。
+
+## 模型配置与路由
+
+`Settings` 保存模式及两组 Base URL / Model ID，不保存 Key。凭据存于被忽略的本机配置文件或钥匙串；自定义后台和前台使用独立钥匙串账户。`RuntimeChecks.summaryConfiguration` 与 `quickConfiguration` 是统一路由入口，App、诊断和 CLI 共用。
+
+官方模式固定 `https://api.stepfun.com/step_plan/v1`，默认后台 step-5-preview（high）、前台 step-3.7-flash（low）。自定义模式分别使用用户配置，不发送 `reasoning_effort`；JSON 模式可选。保存时校验两个端点和 Model ID，清空当前请求上下文与联网缓存，新设置立即生效。
+
+联网搜索和语音独立使用 `stepPlanConfiguration`，仅从官方配置读取 Key，绝不使用自定义服务的凭据。缺少官方 Key 时不发联网请求，语音给出配置提示。设置中的连接测试分别测试两组服务，仅发送合成测试文本。
 
 ```
                     ┌──────────── 唤起时（前台，越快越好） ────────────┐

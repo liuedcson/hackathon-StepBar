@@ -55,6 +55,17 @@ open build/StepBar.app
 
 `config.local.json` 已被 `.gitignore` 忽略。其中 `summary` 是后台模型（step-5-preview），`quick` 是唤起时的模型（step-3.7-flash），两者都使用 `https://api.stepfun.com/step_plan/v1`。
 
+### 在设置中配置模型
+
+菜单栏 →「设置」→「模型配置」：
+
+- **官方 · StepFun Step Plan**：地址固定为官方 Step Plan；后台记忆和前台检索的 Model ID 分别填写，共用一个 Step Plan Key。
+- **自定义 · OpenAI 兼容协议**：后台记忆、前台检索分别填写 Base URL、Model ID 和 API Key，可使用不同服务。Base URL 通常以 `/v1` 结尾，也可填写完整 `/chat/completions` 地址；本机服务支持 HTTP，其他地址要求 HTTPS。
+- API Key 留空保留已保存值；可以单独删除。保存后立即生效，点击「测试已保存的 AI 配置」会分别测试后台和前台，不发送浏览历史。
+- 联网搜索和语音是官方 Step Plan 专用接口，使用另行保存的 Step Plan Key；自定义服务的密钥不会发给它们。没有官方 Key 时跳过联网搜索，语音提示配置，其他检索功能仍可用。
+
+自定义模式不发送 Step 专用推理参数；支持 JSON 输出的服务可开启「请求 JSON 输出模式」。官方和自定义配置分别保留，切换模式不会覆盖另一套 Key。
+
 ### 安装 Chrome 扩展
 
 扩展负责上报标签页、切换和关闭标签页，并读取你停留过的页面正文（无痕窗口除外），让后台更好地理解页面。

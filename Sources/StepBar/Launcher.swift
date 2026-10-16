@@ -154,7 +154,8 @@ extension Store {
         guard settings.webSearch, WebSearch.allows(text) else { return nil }
         let key = Semantic.normalize(text)
         if let cached = webCache[key] { return Task { cached } }
-        let config = RuntimeChecks.quickConfiguration(settings)
+        let config = RuntimeChecks.stepPlanConfiguration(settings)
+        guard !config.apiKey.isEmpty else { return nil }
         return Task { [weak self] in
             guard let found = try? await WebSearch.search(text, configuration: config) else { return [] }
             if let self { if self.webCache.count > 100 { self.webCache = [:] }; self.webCache[key] = found }
@@ -222,7 +223,8 @@ extension Store {
         listening = false
         let pcm = voice.stop()
         intent = "正在识别…"
-        let config = RuntimeChecks.quickConfiguration(settings)
+        let config = RuntimeChecks.stepPlanConfiguration(settings)
+        guard !config.apiKey.isEmpty else { intent = "语音需要官方 Step Plan API Key，请先在设置中保存。"; return }
         Task { [weak self] in
             guard let self else { return }
             do {

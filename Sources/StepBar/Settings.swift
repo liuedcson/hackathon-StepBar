@@ -18,6 +18,12 @@ struct Settings: Codable, Equatable {
     var baseURL = Settings.stepPlan
     // Background understanding model; the launcher uses step-3.7-flash (RuntimeChecks.quickConfiguration).
     var modelID = "step-5-preview"
+    var aiProvider = "stepPlan"
+    var quickModelID = "step-3.7-flash"
+    var customBackgroundURL = ""
+    var customBackgroundModel = ""
+    var customForegroundURL = ""
+    var customForegroundModel = ""
     var jsonMode = false
     // Let the background model study pages and URL patterns while the Mac is idle on power.
     var background = true
@@ -30,7 +36,7 @@ struct Settings: Codable, Equatable {
     var bridgeToken = UUID().uuidString
     var hotkey = "commandM"
     init() {}
-    enum CodingKeys: String, CodingKey { case aiEnabled, baseURL, modelID, jsonMode, background, webSearch, excludedSites, retentionDays, browserBridge, bridgeToken, hotkey, localConfigPath }
+    enum CodingKeys: String, CodingKey { case aiEnabled, baseURL, modelID, aiProvider, quickModelID, customBackgroundURL, customBackgroundModel, customForegroundURL, customForegroundModel, jsonMode, background, webSearch, excludedSites, retentionDays, browserBridge, bridgeToken, hotkey, localConfigPath }
     enum Legacy: String, CodingKey { case autoSummarize, excludedApps }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self), old = try decoder.container(keyedBy: Legacy.self)
@@ -38,6 +44,12 @@ struct Settings: Codable, Equatable {
         aiEnabled = try c.decodeIfPresent(Bool.self, forKey: .aiEnabled) ?? true
         baseURL = try c.decodeIfPresent(String.self, forKey: .baseURL) ?? Settings.stepPlan
         modelID = try c.decodeIfPresent(String.self, forKey: .modelID) ?? "step-5-preview"
+        aiProvider = try c.decodeIfPresent(String.self, forKey: .aiProvider) ?? (baseURL == Settings.stepPlan ? "stepPlan" : "custom")
+        quickModelID = try c.decodeIfPresent(String.self, forKey: .quickModelID) ?? "step-3.7-flash"
+        customBackgroundURL = try c.decodeIfPresent(String.self, forKey: .customBackgroundURL) ?? (aiProvider == "custom" ? baseURL : "")
+        customBackgroundModel = try c.decodeIfPresent(String.self, forKey: .customBackgroundModel) ?? (aiProvider == "custom" ? modelID : "")
+        customForegroundURL = try c.decodeIfPresent(String.self, forKey: .customForegroundURL) ?? customBackgroundURL
+        customForegroundModel = try c.decodeIfPresent(String.self, forKey: .customForegroundModel) ?? customBackgroundModel
         jsonMode = try c.decodeIfPresent(Bool.self, forKey: .jsonMode) ?? false
         background = try c.decodeIfPresent(Bool.self, forKey: .background) ?? old.decodeIfPresent(Bool.self, forKey: .autoSummarize) ?? true
         webSearch = try c.decodeIfPresent(Bool.self, forKey: .webSearch) ?? true
@@ -52,6 +64,13 @@ struct Settings: Codable, Equatable {
     }
     // Keychain account name; the "openAI:" prefix is the Chat Completions protocol Step Plan speaks, kept so saved keys still match.
     var summaryAccount: String { "openAI:\(baseURL.trimmingCharacters(in: .whitespacesAndNewlines))" }
+    var isCustom: Bool { aiProvider == "custom" }
+    var backgroundURL: String { isCustom ? customBackgroundURL : Settings.stepPlan }
+    var backgroundModel: String { isCustom ? customBackgroundModel : modelID }
+    var foregroundURL: String { isCustom ? customForegroundURL : Settings.stepPlan }
+    var foregroundModel: String { isCustom ? customForegroundModel : quickModelID }
+    var backgroundAccount: String { isCustom ? "openAI:background:\(backgroundURL.trimmingCharacters(in: .whitespacesAndNewlines))" : "openAI:\(Settings.stepPlan)" }
+    var foregroundAccount: String { isCustom ? "openAI:foreground:\(foregroundURL.trimmingCharacters(in: .whitespacesAndNewlines))" : backgroundAccount }
     func excludes(url: String) -> Bool {
         guard let host = URL(string: url)?.host?.lowercased() else { return false }
         return excludedDomains.contains { host == $0 || host.hasSuffix("." + $0) }

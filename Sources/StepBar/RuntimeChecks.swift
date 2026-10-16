@@ -6,6 +6,8 @@ struct ConfigurationInput: Codable {
     var summary: Summary
     // Fast model for the launcher (intent and actions while the panel is open); summary is the background model.
     var quick: Summary?
+    var customSummary: Summary?
+    var customQuick: Summary?
 }
 enum RuntimeChecks {
     static var settingsPath: URL {
@@ -16,10 +18,10 @@ enum RuntimeChecks {
         return try? JSONDecoder().decode(ConfigurationInput.self, from: data)
     }
     static func summaryConfiguration(_ settings: Settings) -> AIConfiguration {
-        let local = localConfig(settings)?.summary
-        let key = local?.baseURL == settings.baseURL ? local?.apiKey ?? "" : Keychain.read(settings.summaryAccount)
-        let effort = local?.baseURL == settings.baseURL ? local?.reasoningEffort : nil
-        return AIConfiguration(baseURL: settings.baseURL, modelID: settings.modelID, apiKey: key, jsonMode: settings.jsonMode, reasoningEffort: effort)
+        let file = localConfig(settings)
+        let local = settings.isCustom ? file?.customSummary ?? file?.summary : file?.summary
+        let key = local?.baseURL == settings.backgroundURL ? local?.apiKey ?? "" : Keychain.read(settings.backgroundAccount)
+        return AIConfiguration(baseURL: settings.backgroundURL, modelID: settings.backgroundModel, apiKey: key, jsonMode: settings.jsonMode, reasoningEffort: settings.isCustom ? nil : "high")
     }
     static func quickConfiguration(_ settings: Settings) -> AIConfiguration {
         var config = quickBase(settings)
@@ -30,11 +32,15 @@ enum RuntimeChecks {
         return config
     }
     static func quickBase(_ settings: Settings) -> AIConfiguration {
-        guard let quick = localConfig(settings)?.quick, !quick.apiKey.isEmpty else {
-            var config = summaryConfiguration(settings); config.modelID = "step-3.7-flash"; config.reasoningEffort = "low"; config.jsonMode = false
-            return config
-        }
-        return AIConfiguration(baseURL: quick.baseURL, modelID: quick.modelID, apiKey: quick.apiKey, reasoningEffort: quick.reasoningEffort)
+        let file = localConfig(settings)
+        let local = settings.isCustom ? file?.customQuick ?? file?.quick : file?.quick
+        let key = local?.baseURL == settings.foregroundURL ? local?.apiKey ?? "" : settings.isCustom ? Keychain.read(settings.foregroundAccount) : summaryConfiguration(settings).apiKey
+        return AIConfiguration(baseURL: settings.foregroundURL, modelID: settings.foregroundModel, apiKey: key, jsonMode: settings.jsonMode, reasoningEffort: settings.isCustom ? nil : "low")
+    }
+    static func stepPlanConfiguration(_ settings: Settings) -> AIConfiguration {
+        let file = localConfig(settings)
+        let local = [file?.quick, file?.summary].compactMap { $0 }.first { $0.baseURL == Settings.stepPlan && !$0.apiKey.isEmpty }
+        return AIConfiguration(baseURL: Settings.stepPlan, modelID: "step-3.7-flash", apiKey: local?.apiKey ?? Keychain.read("openAI:\(Settings.stepPlan)"))
     }
     static func writeLocal(_ input: ConfigurationInput, path: String) throws {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -46,7 +52,12 @@ enum RuntimeChecks {
         let summary = summaryConfiguration(settings)
         guard !summary.apiKey.isEmpty else { throw AIError(message: "Credentials unavailable") }
         let path = FileManager.default.currentDirectoryPath + "/config.local.json"
-        let input = ConfigurationInput(summary: .init(baseURL: summary.baseURL, modelID: summary.modelID, apiKey: summary.apiKey))
+        let quick = quickConfiguration(settings)
+        var input = localConfig(settings) ?? ConfigurationInput(summary: .init(baseURL: Settings.stepPlan, modelID: settings.modelID, apiKey: stepPlanConfiguration(settings).apiKey))
+        let savedSummary = ConfigurationInput.Summary(baseURL: summary.baseURL, modelID: summary.modelID, apiKey: summary.apiKey)
+        let savedQuick = ConfigurationInput.Summary(baseURL: quick.baseURL, modelID: quick.modelID, apiKey: quick.apiKey)
+        if settings.isCustom { input.customSummary = savedSummary; input.customQuick = savedQuick }
+        else { input.summary = savedSummary; input.quick = savedQuick }
         try writeLocal(input, path: path)
         settings.localConfigPath = path
         try JSONEncoder().encode(settings).write(to: settingsPath, options: .atomic)
@@ -57,17 +68,25 @@ enum RuntimeChecks {
         _ = try AIClient.endpoint(input.summary.baseURL)
         var settings = (try? Data(contentsOf: settingsPath)).flatMap { try? JSONDecoder().decode(Settings.self, from: $0) } ?? Settings()
         settings.baseURL = input.summary.baseURL; settings.modelID = input.summary.modelID
+        settings.aiProvider = input.summary.baseURL == Settings.stepPlan ? "stepPlan" : "custom"
+        settings.quickModelID = input.quick?.modelID ?? "step-3.7-flash"
+        if settings.isCustom {
+            settings.customBackgroundURL = input.summary.baseURL; settings.customBackgroundModel = input.summary.modelID
+            settings.customForegroundURL = input.quick?.baseURL ?? input.summary.baseURL
+            settings.customForegroundModel = input.quick?.modelID ?? input.summary.modelID
+        }
         settings.aiEnabled = true; settings.hotkey = "commandM"
         if CommandLine.arguments.contains("--local") {
             let path = FileManager.default.currentDirectoryPath + "/config.local.json"
             try writeLocal(input, path: path)
             settings.localConfigPath = path
         } else {
-            try Keychain.write(input.summary.apiKey, account: settings.summaryAccount)
+            try Keychain.write(input.summary.apiKey, account: settings.backgroundAccount)
+            if settings.isCustom { try Keychain.write(input.quick?.apiKey ?? input.summary.apiKey, account: settings.foregroundAccount) }
         }
         try FileManager.default.createDirectory(at: settingsPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(settings).write(to: settingsPath, options: .atomic)
-        print("Configured Step Plan; credentials saved locally, not printed.")
+        print("Configured AI; credentials saved locally, not printed.")
     }
     // Synthetic data only: one page to understand, one site to find patterns in, one launcher call.
     static func liveCheck() async {
@@ -108,7 +127,8 @@ extension RuntimeChecks {
         return Layers(pool: Understand.enrich(data.history, notes: data.memory.notes), memory: data.memory, entries: entries, searchPages: data.searches)
     }
     static func webItems(_ query: String, settings: Settings) async -> [SearchItem] {
-        guard settings.webSearch, WebSearch.allows(query), let found = try? await WebSearch.search(query, configuration: quickConfiguration(settings)) else { return [] }
+        let config = stepPlanConfiguration(settings)
+        guard settings.webSearch, !config.apiKey.isEmpty, WebSearch.allows(query), let found = try? await WebSearch.search(query, configuration: config) else { return [] }
         return WebSearch.items(found).map { var item = $0; item.layer = "联网结果"; return item }
     }
     static func ms(_ start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }

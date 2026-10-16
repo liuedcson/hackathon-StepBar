@@ -197,6 +197,39 @@ extension InferenceTests {
         XCTAssertEqual(picks.count, 1)
     }
     func testWebSearch() async throws {
+        var settings = Settings()
+        XCTAssertEqual(settings.backgroundURL, Settings.stepPlan)
+        XCTAssertEqual(settings.foregroundModel, "step-3.7-flash")
+        settings.aiProvider = "custom"
+        settings.customBackgroundURL = "https://background.example/v1"
+        settings.customBackgroundModel = "memory-model"
+        settings.customForegroundURL = "https://foreground.example/v1"
+        settings.customForegroundModel = "search-model"
+        let restored = try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(restored, settings)
+        XCTAssertEqual(restored.backgroundURL, "https://background.example/v1")
+        XCTAssertEqual(restored.foregroundURL, "https://foreground.example/v1")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        settings.localConfigPath = directory.appendingPathComponent("config.local.json").path
+        let input = ConfigurationInput(
+            summary: .init(baseURL: Settings.stepPlan, modelID: "step-5-preview", apiKey: "test-official-key"),
+            quick: .init(baseURL: Settings.stepPlan, modelID: "step-3.7-flash", apiKey: "test-official-key"),
+            customSummary: .init(baseURL: settings.backgroundURL, modelID: settings.backgroundModel, apiKey: "test-background-key"),
+            customQuick: .init(baseURL: settings.foregroundURL, modelID: settings.foregroundModel, apiKey: "test-foreground-key"))
+        try RuntimeChecks.writeLocal(input, path: settings.localConfigPath!)
+        let background = Study.configuration(settings), foreground = RuntimeChecks.quickConfiguration(settings)
+        XCTAssertEqual(background.modelID, "memory-model")
+        XCTAssertEqual(background.apiKey, "test-background-key")
+        XCTAssertNil(background.reasoningEffort)
+        XCTAssertEqual(foreground.modelID, "search-model")
+        XCTAssertEqual(foreground.apiKey, "test-foreground-key")
+        XCTAssertNil(foreground.reasoningEffort)
+        XCTAssertEqual(RuntimeChecks.stepPlanConfiguration(settings).apiKey, "test-official-key")
+        settings.aiProvider = "stepPlan"
+        XCTAssertEqual(RuntimeChecks.quickConfiguration(settings).baseURL, Settings.stepPlan)
+        XCTAssertEqual(Study.configuration(settings).reasoningEffort, "high")
         // Only plain words go to the web: no recall, links, order numbers, long identifiers or secrets.
         XCTAssertEqual(WebSearch.allows("kimicode github"), true)
         XCTAssertEqual(WebSearch.allows("gpt-5 发布了吗"), true)

@@ -83,7 +83,14 @@ import SwiftUI
         // Written back on every launch so migrated values replace old ones and retired fields drop out.
         if let normalized = try? JSONEncoder().encode(settings), normalized != (try? Data(contentsOf: settingsPath)) { try? normalized.write(to: settingsPath, options: .atomic) }
         if let local = RuntimeChecks.localConfig(settings) {
-            settings.baseURL = local.summary.baseURL; settings.modelID = local.summary.modelID
+            if settings.isCustom {
+                let summary = local.customSummary ?? local.summary, quick = local.customQuick ?? local.quick ?? summary
+                settings.customBackgroundURL = summary.baseURL; settings.customBackgroundModel = summary.modelID
+                settings.customForegroundURL = quick.baseURL; settings.customForegroundModel = quick.modelID
+            } else {
+                if local.summary.baseURL == Settings.stepPlan { settings.modelID = local.summary.modelID }
+                if local.quick?.baseURL == Settings.stepPlan { settings.quickModelID = local.quick?.modelID ?? "step-3.7-flash" }
+            }
         }
         refreshModelLabels()
         bridge.onReport = { [weak self] report in Task { @MainActor in self?.receiveBrowser(report) } }
@@ -96,26 +103,37 @@ import SwiftUI
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in Task { @MainActor in self?.tick() } }
     }
     func refreshModelLabels() {
-        aiStatus = settings.aiEnabled ? "后台 \(settings.modelID)" : "AI 未启用 · 本地规则"
+        aiStatus = settings.aiEnabled ? "后台 \(settings.backgroundModel)" : "AI 未启用 · 本地规则"
         launcherModel = settings.aiEnabled ? RuntimeChecks.quickConfiguration(settings).modelID : "未启用"
     }
-    var aiDescription: String { settings.aiEnabled ? "后台理解 \(settings.modelID.isEmpty ? "未配置模型" : settings.modelID) · 唤起 \(RuntimeChecks.quickConfiguration(settings).modelID)" : "StepFun 模型未启用" }
-    func saveSettings(_ draft: Settings, key: String, clearKey: Bool) {
+    var aiDescription: String { settings.aiEnabled ? "后台理解 \(settings.backgroundModel) · 唤起 \(RuntimeChecks.quickConfiguration(settings).modelID)" : "模型未启用" }
+    func saveSettings(_ draft: Settings, key: String, clearKey: Bool, foregroundKey: String = "", clearForegroundKey: Bool = false) {
         do {
-            if draft.aiEnabled || !draft.modelID.isEmpty { _ = try AIClient.endpoint(draft.baseURL) }
-            if draft.aiEnabled && draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw AIError(message: "启用 AI 前请填写 Model ID") }
+            if draft.aiEnabled {
+                _ = try AIClient.endpoint(draft.backgroundURL)
+                _ = try AIClient.endpoint(draft.foregroundURL)
+            }
+            if draft.aiEnabled && [draft.backgroundModel, draft.foregroundModel].contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { throw AIError(message: "请填写后台和前台 Model ID") }
             var updated = draft
             updated.retentionDays = min(90, max(1, updated.retentionDays))
             let current = RuntimeChecks.summaryConfiguration(settings)
-            let summaryKey = clearKey ? "" : !key.isEmpty ? key.trimmingCharacters(in: .whitespacesAndNewlines) : updated.summaryAccount == settings.summaryAccount ? current.apiKey : Keychain.read(updated.summaryAccount)
+            let summaryKey = clearKey ? "" : !key.isEmpty ? key.trimmingCharacters(in: .whitespacesAndNewlines) : updated.backgroundAccount == settings.backgroundAccount ? current.apiKey : Keychain.read(updated.backgroundAccount)
+            let foregroundCurrent = RuntimeChecks.quickConfiguration(settings)
+            let quickKey = !updated.isCustom ? summaryKey : clearForegroundKey ? "" : !foregroundKey.isEmpty ? foregroundKey.trimmingCharacters(in: .whitespacesAndNewlines) : updated.foregroundAccount == settings.foregroundAccount ? foregroundCurrent.apiKey : Keychain.read(updated.foregroundAccount)
             if let path = updated.localConfigPath {
-                let existing = RuntimeChecks.localConfig(settings)
-                var input = ConfigurationInput(summary: .init(baseURL: updated.baseURL, modelID: updated.modelID, apiKey: summaryKey, reasoningEffort: existing?.summary.reasoningEffort))
-                input.quick = existing?.quick
+                var input = RuntimeChecks.localConfig(settings) ?? ConfigurationInput(summary: .init(baseURL: Settings.stepPlan, modelID: "step-5-preview", apiKey: ""))
+                let summary = ConfigurationInput.Summary(baseURL: updated.backgroundURL, modelID: updated.backgroundModel, apiKey: summaryKey)
+                let quick = ConfigurationInput.Summary(baseURL: updated.foregroundURL, modelID: updated.foregroundModel, apiKey: quickKey)
+                if updated.isCustom { input.customSummary = summary; input.customQuick = quick }
+                else { input.summary = summary; input.quick = quick }
                 try RuntimeChecks.writeLocal(input, path: path)
-            } else if clearKey || !key.isEmpty { try Keychain.write(summaryKey, account: updated.summaryAccount) }
+            } else {
+                if clearKey || !key.isEmpty { try Keychain.write(summaryKey, account: updated.backgroundAccount) }
+                if updated.isCustom && (clearForegroundKey || !foregroundKey.isEmpty) { try Keychain.write(quickKey, account: updated.foregroundAccount) }
+            }
             try JSONEncoder().encode(updated).write(to: settingsPath, options: .atomic)
             stopJobs()
+            searchGeneration += 1; webCache = [:]; resetAI()
             settings = updated
             browserTabs = []; browserUpdated = .distantPast
             if settings.browserBridge { bridge.start(token: settings.bridgeToken) } else { bridge.stop(); bridgeStatus = "浏览器桥接已关闭" }
@@ -274,14 +292,19 @@ import SwiftUI
     func testAI() {
         guard !testingAI else { return }
         testingAI = true
-        let config = Study.configuration(settings)
+        let configurations = [Study.configuration(settings), RuntimeChecks.quickConfiguration(settings)]
         Task { [weak self] in
             guard let self else { return }
             defer { self.testingAI = false }
-            do {
-                let _: AINotes = try await self.ai.complete(AINotes.self, configuration: config, system: "只输出 JSON：{\"items\":[]}", payload: "连接测试，不含用户数据。")
-                self.aiStatus = "连接成功 · \(config.modelID)"
-            } catch { self.aiStatus = error.localizedDescription }
+            var statuses: [String] = []
+            for (index, config) in configurations.enumerated() {
+                let label = index == 0 ? "后台" : "前台"
+                do {
+                    let _: AINotes = try await self.ai.complete(AINotes.self, configuration: config, system: "只输出 JSON：{\"items\":[]}", payload: "连接测试，不含用户数据。")
+                    statuses.append("\(label)：连接成功")
+                } catch { statuses.append("\(label)：\(error.localizedDescription)") }
+            }
+            self.aiStatus = statuses.joined(separator: " · ")
         }
     }
 
