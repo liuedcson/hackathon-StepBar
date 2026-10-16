@@ -2,7 +2,7 @@
 
 StepBar 的愿景是成为 **macOS 生态级的工作伙伴**：连接你授权的应用，理解当下的工作上下文，整理常用的工作路径，学习不同工具之间的组合，在你唤起时给出最合适的下一步。
 
-**不只是“找到一个东西”，而是“知道你接下来要做什么”。** 
+**不只是“找到一个东西”，而是“知道你接下来要做什么”。**
 
 ## 核心理念：从上下文，到下一步
 
@@ -96,12 +96,32 @@ StepBar 要做的，不只是匹配标题，而是理解页面讲了什么、对
 
 ### v0.1.0 安装包（无需 Swift 工具链）
 
-1. 登录 GitHub，打开 [私有 Releases](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.0)，下载对应架构的 `StepBar-0.1.0-arm64.zip`（Apple Silicon）。
-2. 解压，将 `StepBar.app` 移到 `~/Applications` 或有写权限的 `/Applications`，再打开。需要 macOS 13+ 和 Google Chrome。
-3. 当前使用本机固定签名，**未通过 Apple 公证**。若系统拦截，在「系统设置 → 隐私与安全性」中手动允许打开；不建议关闭系统安全保护。
-4. 菜单栏 → 设置，填写官方 Step Plan Key，或分别配置自定义后台/前台服务。安装包不包含任何 Key，不会自动读取源码旁的 `config.local.json`。
-5. 菜单栏 → 安装 Chrome 扩展，在扩展页开启开发者模式，加载 Finder 选中的文件夹。扩展资源由应用复制到 `~/Library/Application Support/StepBar/browser-extension`，自动生成本机配对码。
-6. 按 ⌘M 验证历史搜索，再测试 AI 配置与目标网页。语音按需配置，未启用的自定义语音不申请权限。
+需要 **macOS 13+、Apple Silicon（M 系列芯片）和 Google Chrome**。目前没有发布 Intel 安装包。
+
+- [直接下载 StepBar-0.1.0-arm64.zip](https://github.com/liuedcson/hackathon-StepBar/releases/download/v0.1.0/StepBar-0.1.0-arm64.zip)
+- [Release 页面与版本说明](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.0)
+
+仓库是私有的，需先登录有访问权限的 GitHub 账号。链接显示 404 时，先检查登录与仓库权限，不要从不明来源下载。
+
+1. 下载 ZIP 并解压，得到 `StepBar.app`。
+2. 将应用移到 `/Applications`，或自己的 `~/Applications` 文件夹，再双击打开。不要一直从下载目录运行。
+3. 首次启动若被系统拦截，按照下节步骤放行。
+4. 启动后在 **屏幕顶部菜单栏** 找到 StepBar 图标。它没有普通应用的主窗口，不出现 Dock 图标属于正常行为。
+5. 打开菜单栏 →「设置」，填写官方 Step Plan Key，或配置自定义后台／前台服务，保存后点击「测试已保存的 AI 配置」。安装包不含 Key，也不会自动读取源码旁的 `config.local.json`。
+6. 按下文安装 Chrome 扩展并验证连接，最后按 **⌘M** 开始搜索。不配置模型也能先用本地检索。
+
+### 首次启动：Apple 无法验证 StepBar
+
+当前使用本机固定签名，**没有 Developer ID 签名与 Apple 公证**。提示“Apple 无法验证 StepBar 是否包含恶意软件”表示系统无法验证开发者与公证状态，不等于已检测到恶意软件；也不能据此保证应用安全。只在确认安装包来源可信后放行。
+
+1. **尝试打开一次 StepBar**，让系统显示拦截提示。
+2. 前往 **系统设置 → 隐私与安全性**。
+3. 向下滚动到「安全性」，找到“已阻止 StepBar 以保护 Mac”的提示，点击 **仍要打开**。
+4. 输入系统密码或使用 **Touch ID**，再确认打开。
+
+如果没有“仍要打开”：重新尝试打开一次应用，然后回到该页面检查。受组织管理的 Mac 可能禁止放行，需要联系管理员。若提示明确指出“会损坏电脑”、检测到恶意软件或应用已损坏，不应按此方法绕过；停止运行并核对安装包。
+
+**不需要关闭 Gatekeeper、修改全局安全设置、开启完全磁盘访问或辅助功能权限。** 麦克风权限仅在启用并使用语音时按需申请。未来正式分发需要 Developer ID 签名、Hardened Runtime 和 Apple 公证；本版尚未完成。
 
 ### 私有 GitHub 授权更新
 
@@ -145,13 +165,37 @@ open build/StepBar.app
 
 ### 安装 Chrome 扩展
 
-扩展负责上报标签页、切换和关闭标签页，并读取你停留过的页面正文（无痕窗口除外），让后台更好地理解页面。
+**扩展就在 Git 仓库里：[browser-extension/](browser-extension/)。** 文件包括 `manifest.json`、`background.js`、配对设置页和图标。`pairing.json` 是每台机器生成的私有配对码，故意不提交到 Git，不能共用或上传。
 
-1. 打开 `chrome://extensions`，开启右上角「开发者模式」；
-2. 点「加载已解压的扩展程序」，选择仓库里的 `browser-extension` 文件夹；
-3. 推荐通过菜单栏「安装 Chrome 扩展」选择应用准备好的扩展文件夹，自动配对。更新后在扩展页点「重新加载」。
+**方式一：使用安装包（推荐，不需要下载源码）**
 
-不装扩展也能用，这时只搜索 Chrome 历史。
+1. 先启动 StepBar，保持菜单栏应用运行。
+2. 点击菜单栏 → **安装 Chrome 扩展**。应用会准备扩展资源，在 Finder 中选中文件夹，并尝试打开 Chrome 扩展页。
+3. 在 Chrome 地址栏输入 `chrome://extensions`，打开右上角 **开发者模式**。
+4. 点击 **加载已解压的扩展程序**，选择 Finder 中的 `browser-extension` 文件夹。不是选择 ZIP、`.app` 或某个 JS 文件。
+5. 如果找不到文件夹：在选择窗口按 **⌘⇧G**，粘贴 `~/Library/Application Support/StepBar/browser-extension`，再选中它。
+6. 扩展会读取该目录里的本机配对码自动连接。这个目录需长期保留；不要加载后删除或移动。
+
+**下一版改进（当前源码，尚未发布）：** 点击「安装 Chrome 扩展」会将可加载的扩展准备到 **`~/Downloads/StepBar-browser-extension`**，并在 Finder 中选中它。Chrome 中选择这个文件夹即可；以后再次点击可刷新扩展文件，再在 Chrome 中点「重新加载」。该目录安装后不能删除或移动。已发布 v0.1.0 仍使用上面的 Application Support 路径。
+
+**方式二：从 Git 仓库加载扩展**
+
+1. 克隆仓库或在 GitHub 选择 **Code → Download ZIP** 并解压。
+2. 在 `chrome://extensions` 开启开发者模式，加载源码中的 `browser-extension/` 文件夹。
+3. 打开 StepBar →「设置」→「Chrome 扩展」，确认已启用本机 Chrome 桥接，复制配对码。
+4. 在 Chrome 工具栏点扩展图标（找不到时点拼图图标），打开配对页，粘贴配对码并点击 **保存并连接**。也可从扩展详情进入「扩展程序选项」。源码目录默认没有你的配对文件，所以需要手动配对。
+
+**如何确认安装成功**
+
+- Chrome 扩展列表里能看到 **StepBar for Chrome**，且启用开关已打开。
+- 扩展配对页显示「已连接」；StepBar 设置里的桥接状态更新，出现标签页信息。
+- 打开两个公开网页，按 ⌘M 搜索其中一个的标题。选中已经打开的标签页后，应切回原标签页。
+
+连接失败时，检查 StepBar 是否正在运行、桥接是否开启和配对码是否一致；重新生成配对码后，重新加载扩展或手动保存新配对码。升级应用后在 `chrome://extensions` 点扩展的 **重新加载**；从头重装时移除旧扩展，再加载新目录，避免重复扩展。
+
+扩展上报标签页、读取停留页面的正文摘录，并执行切换／关闭标签页；不读取无痕窗口。**不装扩展也能搜索 Chrome 历史，但没有扩展提供的标签页上下文、切换／关闭和页面正文能力。**
+
+完整重装、验收与故障排查见 [安装与使用指南](docs/INSTALL.md)。
 
 ## 使用
 

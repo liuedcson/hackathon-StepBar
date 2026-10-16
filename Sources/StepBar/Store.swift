@@ -167,6 +167,11 @@ import SwiftUI
         let folder = Settings.folder.appendingPathComponent("browser-extension")
         return FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path) ? folder : nil
     }
+    var downloadExtensionFolder: URL {
+        (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true))
+            .appendingPathComponent("StepBar-browser-extension", isDirectory: true)
+    }
     // Lets the unpacked extension pair itself; the file is git-ignored and only readable by the extension.
     func writePairing() {
         let target = Settings.folder.appendingPathComponent("browser-extension")
@@ -184,14 +189,43 @@ import SwiftUI
         let data = try? JSONEncoder().encode(["token": settings.bridgeToken])
         try? data?.write(to: folder.appendingPathComponent("pairing.json"), options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: folder.appendingPathComponent("pairing.json").path)
+        let exported = downloadExtensionFolder
+        if FileManager.default.fileExists(atPath: exported.appendingPathComponent(".stepbar-managed").path) {
+            try? data?.write(to: exported.appendingPathComponent("pairing.json"), options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: exported.appendingPathComponent("pairing.json").path)
+        }
     }
     func installExtension() {
         writePairing()
-        if let folder = extensionFolder { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+        guard let source = extensionFolder else {
+            status = "未找到扩展资源，请检查安装包。"
+            return
+        }
+        let folder = downloadExtensionFolder
+        let manager = FileManager.default
+        let marker = folder.appendingPathComponent(".stepbar-managed")
+        do {
+            if manager.fileExists(atPath: folder.path), !manager.fileExists(atPath: marker.path) {
+                status = "下载目录中已存在非 StepBar 管理的 StepBar-browser-extension 文件夹，请先重命名它再重试。"
+                return
+            }
+            try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("StepBar extension export\n".utf8).write(to: marker, options: .atomic)
+            for file in ["manifest.json", "background.js", "options.html", "options.js", "icons", "pairing.json"] {
+                let destination = folder.appendingPathComponent(file)
+                if manager.fileExists(atPath: destination.path) { try manager.removeItem(at: destination) }
+                try manager.copyItem(at: source.appendingPathComponent(file), to: destination)
+            }
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: folder.appendingPathComponent("pairing.json").path)
+        } catch {
+            status = "无法将扩展准备到下载目录：\(error.localizedDescription)"
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
         if let chrome = NSWorkspace.shared.urlForApplication(withBundleIdentifier: BrowserTab.chrome), let page = URL(string: "chrome://extensions") {
             NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
         }
-        status = "在 Chrome 扩展页打开「开发者模式」→「加载已解压的扩展程序」→ 选择 Finder 里选中的 browser-extension 文件夹，会自动配对。"
+        status = "扩展已准备到下载目录的 StepBar-browser-extension。Chrome → 开发者模式 → 加载已解压的扩展程序，选择该文件夹；安装后请勿删除或移动。"
     }
     func togglePause() {
         paused.toggle(); stopJobs()
