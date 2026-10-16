@@ -197,6 +197,11 @@ extension InferenceTests {
         XCTAssertEqual(picks.count, 1)
     }
     func testWebSearch() async throws {
+        let spokenLayers = Layers(pool: [], memory: Memory(), entries: [], searchPages: [])
+        let spoken = spokenLayers.siteSearchActions("知乎大模型会不会让程序员失业", general: 0).targeted
+        XCTAssertEqual(spoken.count, 1)
+        XCTAssertEqual(URLComponents(string: spoken[0].url!)?.queryItems?.first(where: { $0.name == "q" })?.value, "大模型会不会让程序员失业")
+        XCTAssertEqual(spokenLayers.siteSearchActions("大模型会不会让程序员失业知乎", general: 0).targeted.count, 1)
         var settings = Settings()
         XCTAssertEqual(ReleaseManifest.newer("0.1.1", than: "0.1.0"), true)
         XCTAssertEqual(ReleaseManifest.newer("0.10.0", than: "0.2.0"), true)

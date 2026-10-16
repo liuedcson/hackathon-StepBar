@@ -82,6 +82,23 @@ struct Layers {
                 }
             }
         }
+        // Chinese ASR usually omits spaces: recognize an explicit site name at either edge.
+        if targeted.isEmpty {
+            for site in Sites.known {
+                for name in site.names where name.unicodeScalars.contains(where: { $0.value >= 0x4E00 && $0.value <= 0x9FFF }) {
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let value: String
+                    if trimmed.hasPrefix(name) { value = String(trimmed.dropFirst(name.count)) }
+                    else if trimmed.hasSuffix(name) { value = String(trimmed.dropLast(name.count)) }
+                    else { continue }
+                    let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !query.isEmpty, let url = Inference.instantiateSearch(site.template, value: query) else { continue }
+                    targeted.append(.action(title: "在 \(name) 搜索「\(query)」", url: url, note: "站内搜索"))
+                    break
+                }
+                if !targeted.isEmpty { break }
+            }
+        }
         let others = entries.prefix(general).compactMap { recipe in
             Inference.instantiateSearch(recipe.template, value: text).map { SearchItem.action(title: "在 \(recipe.label) 搜索「\(text.prefix(40))」", url: $0, note: "站内搜索") }
         }
