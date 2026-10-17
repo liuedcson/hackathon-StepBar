@@ -19,7 +19,7 @@ restore() {
       rm -rf "$target" || { echo "Cannot remove failed installation; backup retained"; return; }
       mv "$backup" "$target" || return
     fi
-    if ! /bin/ps -axo comm= | /usr/bin/grep -Fxq "$target/Contents/MacOS/StepBar"; then
+    if ! kill -0 "$pid" 2>/dev/null; then
       [[ ! -d "$target" ]] || /usr/bin/open "$target"
     fi
     rm -rf "$workspace"
@@ -29,10 +29,10 @@ trap restore EXIT
 trap 'exit 1' TERM INT HUP
 touch "$workspace/helper-ready" || exit 1
 for attempt in {1..60}; do
-  [[ "$(/bin/ps -p "$pid" -o comm= 2>/dev/null)" == "$target/Contents/MacOS/StepBar" ]] || break
+  kill -0 "$pid" 2>/dev/null || break
   sleep 1
 done
-if /bin/ps -axo comm= | /usr/bin/grep -Fxq "$target/Contents/MacOS/StepBar"; then
+if kill -0 "$pid" 2>/dev/null || /bin/ps -axo comm= | /usr/bin/grep -Fxq "$target/Contents/MacOS/StepBar"; then
   echo "Application still running; update cancelled"
   exit 1
 fi

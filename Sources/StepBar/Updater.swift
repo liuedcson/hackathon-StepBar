@@ -30,7 +30,7 @@ struct ReleaseManifest: Codable {
 
 @MainActor final class Updater: ObservableObject {
     static let repository = "liuedcson/hackathon-StepBar"
-    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.5" }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.6" }
     static var architecture: String {
         #if arch(arm64)
         return "arm64"
@@ -120,12 +120,29 @@ struct ReleaseManifest: Codable {
     }
     func install() async {
         guard !busy, let (manifest, asset) = ready else { return }
-        let current = Bundle.main.bundleURL
-        guard !current.path.contains("/AppTranslocation/") else { status = "请退出 StepBar，将应用移入「应用程序」后重新打开，再安装更新"; return }
-        guard current.pathExtension == "app", current.lastPathComponent == "StepBar.app",
-              FileManager.default.isWritableFile(atPath: current.deletingLastPathComponent().path),
-              let helper = Bundle.main.url(forResource: "install-update", withExtension: "sh") else { status = "请将 StepBar.app 放到有写权限的应用目录"; return }
         busy = true; defer { busy = false }
+        let current = Bundle.main.bundleURL
+        var destination = current
+        if current.path.contains("/AppTranslocation/") {
+            // Never replace the read-only translocation mount or guess its original path.
+            let picker = NSOpenPanel()
+            picker.title = "选择要更新的 StepBar.app"
+            picker.message = "macOS 正在隔离运行 StepBar。请选择应用程序或下载目录中的原应用；确认后更新这份应用，记忆与配置保留。"
+            picker.canChooseFiles = true; picker.canChooseDirectories = false
+            picker.treatsFilePackagesAsDirectories = false; picker.allowsMultipleSelection = false
+            picker.directoryURL = URL(fileURLWithPath: "/Applications")
+            guard picker.runModal() == .OK, let selected = picker.url else { status = "已取消，原应用未改动"; return }
+            destination = selected
+        }
+        guard current.pathExtension == "app", current.lastPathComponent == "StepBar.app",
+               let helper = Bundle.main.url(forResource: "install-update", withExtension: "sh") else { showFailure("安装工具缺失，请重新下载完整应用"); return }
+        guard destination.lastPathComponent == "StepBar.app", !destination.path.contains("/AppTranslocation/"),
+              Bundle(url: destination)?.bundleIdentifier == Bundle.main.bundleIdentifier,
+              FileManager.default.isWritableFile(atPath: destination.deletingLastPathComponent().path),
+              (try? destination.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
+            showFailure("请选择真实、可写目录中的 StepBar.app；不能更新隔离映射或其他应用"); return
+        }
+        let target = destination
         var workspace: URL?
         do {
             status = "正在下载 v\(manifest.version)…"
@@ -149,6 +166,7 @@ struct ReleaseManifest: Codable {
             _ = try Self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
             let signature = try Self.run("/usr/bin/codesign", ["-d", "-r-", current.path])
             guard let requirement = ReleaseManifest.signingRequirementArgument(signature) else { throw AIError(message: "当前应用未使用稳定证书签名，请手动更新") }
+            _ = try Self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R", requirement, target.path])
             _ = try Self.run("/usr/bin/codesign", ["--verify", "-R", requirement, app.path])
             }.value
             let app = folder.appendingPathComponent("StepBar.app")
@@ -156,7 +174,7 @@ struct ReleaseManifest: Codable {
             let copiedHelper = folder.appendingPathComponent("install-update.sh")
             try FileManager.default.copyItem(at: helper, to: copiedHelper)
             let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = [copiedHelper.path, String(ProcessInfo.processInfo.processIdentifier), app.path, current.path, folder.path]
+            process.arguments = [copiedHelper.path, String(ProcessInfo.processInfo.processIdentifier), app.path, target.path, folder.path]
             try process.run()
             for _ in 0..<100 {
                 if FileManager.default.fileExists(atPath: folder.appendingPathComponent("helper-ready").path) { break }
@@ -170,8 +188,17 @@ struct ReleaseManifest: Codable {
             NotificationCenter.default.post(name: .init("StepBarInstallUpdate"), object: nil)
         } catch {
             if let workspace { try? FileManager.default.removeItem(at: workspace) }
-            status = error.localizedDescription
+            showFailure(error.localizedDescription)
         }
+    }
+    private func showFailure(_ message: String) {
+        status = message
+        let alert = NSAlert()
+        alert.messageText = "更新未完成"
+        alert.informativeText = message
+        alert.addButton(withTitle: "知道了")
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow, window.attachedSheet == nil { alert.beginSheetModal(for: window) }
+        else { alert.runModal() }
     }
 }
 

@@ -21,8 +21,8 @@ with tempfile.TemporaryDirectory(prefix="stepbar-helper-tests-", dir=os.environ.
         tool.chmod(0o700)
         helper = helper.replace("/usr/bin/" + name, str(tool))
     executable = base / "helper.sh"
-    executable.write_text(helper)
-    for scenario in ("success", "signature-failure", "launch-failure"):
+    executable.write_text(helper.replace("{1..60}", "{1..2}"))
+    for scenario in ("success", "signature-failure", "launch-failure", "running-translocated"):
         case = base / scenario
         case.mkdir()
         home = case / "home"
@@ -35,11 +35,15 @@ with tempfile.TemporaryDirectory(prefix="stepbar-helper-tests-", dir=os.environ.
         source.mkdir(parents=True)
         (source / "version").write_text("new")
         env = dict(os.environ, HOME=str(home), FAIL_SIGN=str(int(scenario == "signature-failure")), FAIL_OPEN=str(int(scenario == "launch-failure")))
-        result = subprocess.run(["/bin/zsh", str(executable), "99999999", str(source), str(target), str(workspace)], env=env, timeout=15)
+        sleeper = subprocess.Popen(["/bin/sleep", "20"]) if scenario == "running-translocated" else None
+        try:
+            result = subprocess.run(["/bin/zsh", str(executable), str(sleeper.pid) if sleeper else "99999999", str(source), str(target), str(workspace)], env=env, timeout=15)
+        finally:
+            if sleeper: sleeper.terminate(); sleeper.wait()
         assert (result.returncode == 0) == (scenario == "success"), scenario
         assert (target / "version").read_text() == ("new" if scenario == "success" else "old"), scenario
         assert not workspace.exists(), scenario
         assert not list(case.glob("StepBar.app.update-backup-*")), scenario
-        assert (home / "launches").exists(), scenario
+        assert (home / "launches").exists() == (scenario != "running-translocated"), scenario
         assert (home / "Library/Application Support/StepBar/update.log").exists(), scenario
-    print("PASS: isolated helper replacement, signature failure rollback, launch failure rollback, cleanup and logs")
+    print("PASS: isolated helper replacement, rollback, cleanup, logs and live PID with different path blocks replacement")
