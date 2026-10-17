@@ -200,8 +200,8 @@ extension InferenceTests {
         XCTAssertEqual(pending.map(\.id), [tab.id, step.id, other.id, once.id])
         let result = AINotes(items: [.init(i: 1, purpose: "StepFun 模型 API 文档", terms: ["阶跃星辰", "阶跃", "StepFun", "模型 API", "阶跃"], asks: ["阶跃 api 文档"]), .init(i: 9, purpose: "x", terms: ["x"], asks: nil)])
         XCTAssertEqual(Understand.apply(result, to: pending, pages: [:], into: &notes), 1)
-        // Title words and repeats are dropped from terms.
-        XCTAssertEqual(notes[step.id]?.terms, ["阶跃星辰", "阶跃", "模型 API"])
+        // Keep useful title entities, drop repeats only.
+        XCTAssertEqual(notes[step.id]?.terms, ["阶跃星辰", "阶跃", "StepFun", "模型 API"])
         XCTAssertEqual(Understand.pending(pool: [other, step, tab], notes: notes, pages: [:]).map(\.id), [tab.id, other.id])
         // Reading the page text later makes it worth a second look.
         let text = [step.id: PageText(url: step.url!, title: step.title, text: "鉴权")]
@@ -218,7 +218,7 @@ extension InferenceTests {
         let board = SearchItem(id: "u:https://books.example/d", kind: .history, title: "图书目录 - 阅读清单", subtitle: "", url: "https://books.example/d", visits: 1)
         var tagged = notes; tagged[other.id] = PageNote(title: other.title, purpose: "", terms: ["阅读清单"])
         let both = Understand.enrich([other, board], notes: tagged)
-        XCTAssertEqual(Semantic.match(query: "阅读清单", pool: both, pages: [:]).first?.id, board.id)
+        XCTAssertEqual(Semantic.match(query: "阅读清单", pool: both, pages: [:]).first?.id, other.id)
         XCTAssertEqual(Ranker.rank("阅读清单", in: both).first?.id, board.id)
         XCTAssertEqual(Understand.prune(notes, alive: [], now: Date().addingTimeInterval(31 * 86400)).count, 0)
         XCTAssertEqual(Understand.prune(notes, alive: [step.id], now: Date().addingTimeInterval(31 * 86400)).count, 1)
@@ -279,12 +279,12 @@ extension InferenceTests {
         XCTAssertEqual(layers.history("deepseek github").direct.first?.url, "https://github.com/search?q=deepseek")
         XCTAssertEqual(layers.history("github stepfun-ai/Step-Audio").direct.contains { $0.url == "https://github.com/stepfun-ai/Step-Audio" }, true)
         XCTAssertEqual(layers.history("订单 1792069018").direct.first?.url, "https://work.example/orders/1792069018")
-        // What this query led to before comes first, also for the start of the query.
-        XCTAssertEqual(layers.history("时间戳").matches.first?.id, ts.id)
+        // Past choices rerank relevant hits; they cannot inject a non-matching title.
+        XCTAssertEqual(layers.history("时间戳").matches.count, 0)
         XCTAssertEqual(layers.queryWeights("时间")[ts.id], 1)
         XCTAssertEqual(layers.history("whisper").matches.first?.id, repo.id)
         let candidates = layers.candidates("whisper", semantic: [ts])
-        XCTAssertEqual(candidates.map(\.layer), ["历史匹配", "历史匹配", "语义匹配"].suffix(candidates.count).map { $0 })
+        XCTAssertEqual(candidates.map(\.layer), ["历史匹配", "语义匹配"])
     }
     func testAssistantPayload() {
         let pattern = Pattern(host: "github.com", template: "https://github.com/{value}", label: "GitHub 仓库", param: "owner/repo", shape: "text", examples: ["a/b"])
@@ -293,12 +293,12 @@ extension InferenceTests {
         let recipe = Recipe(source: "clipboard", template: "https://work.example/orders/{value}", label: "订单", shape: "number")
         var item = SearchItem(id: "u:a", kind: .history, title: "A", subtitle: "", url: "https://a.example/")
         item.layer = "语义匹配"; item.purpose = "测试用途"
-        let payload = Assistant.payload(query: "转日期", current: nil, clipboard: "1792069018", candidates: [item], recipes: [recipe], searches: [], patterns: [pattern])
+        let payload = Assistant.payload(query: "转日期 1792069018", candidates: [item], recipes: [recipe], searches: [], patterns: [pattern])
         XCTAssertEqual(payload.contains("1792069018"), true)
-        XCTAssertEqual(payload.contains("[语义匹配·浏览历史]"), true)
+        XCTAssertEqual(payload.contains("语义匹配"), true)
         XCTAssertEqual(payload.contains("work.example"), true)
         // An entry that takes ids is not offered without an id in front of the model.
-        XCTAssertEqual(Assistant.payload(query: "随便", current: nil, clipboard: nil, candidates: [], recipes: [recipe], searches: [], patterns: []).contains("work.example"), false)
+        XCTAssertEqual(Assistant.payload(query: "随便", candidates: [], recipes: [recipe], searches: [], patterns: []).contains("work.example"), false)
         let picks = Assistant.picks(AIActions(intent: "x", picks: [AIPick(id: "c0", confidence: 0.9), AIPick(id: "c7", confidence: 0.9), AIPick(id: "c0x", confidence: 1), AIPick(id: "c0", confidence: 0.1)], actions: []), from: [item])
         XCTAssertEqual(picks[item.id], 0.9)
         XCTAssertEqual(picks.count, 1)

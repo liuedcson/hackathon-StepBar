@@ -40,7 +40,7 @@ enum WebSearch {
     static func allows(_ query: String) -> Bool {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.count >= 2, text.count <= 120, Inference.safeURL(text) == nil, Privacy.text(text) == text else { return false }
-        guard !["上周", "昨天", "前天", "刚才", "刚刚", "之前", "上次", "那篇", "看过", "看的", "打开过"].contains(where: text.contains) else { return false }
+        guard !Inference.recalling(text) else { return false }
         return !Inference.values(in: text).contains(where: privateID)
     }
     // Order numbers, long identifiers and UUIDs are not public search terms; "gpt-5" and "2026" are fine.

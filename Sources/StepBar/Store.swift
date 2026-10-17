@@ -2,15 +2,15 @@ import AppKit
 import SwiftUI
 
 @MainActor final class Store: ObservableObject {
-    @Published var memory = Memory()
-    @Published var settings = Settings()
-    @Published var paused = false
+    @Published var memory = Memory() { didSet { if memory.notes != oldValue.notes { invalidateSearchIndex() } } }
+    @Published var settings = Settings() { didSet { if settings != oldValue { stopForeground(); clearWebCache() } } }
+    @Published var paused = false { didSet { if paused { stopForeground(); clearWebCache() } } }
     @Published var status = "准备就绪"
     @Published var aiStatus = "AI 未启用 · 本地规则"
     @Published var bridgeStatus = "等待 Chrome 扩展连接"
     @Published var testingAI = false
     @Published var launcherModel = ""
-    @Published var browserTabs: [BrowserTab] = []
+    @Published var browserTabs: [BrowserTab] = [] { didSet { invalidateSearchIndex() } }
     @Published var query = "" {
         didSet {
             // Large pastes: keep one line and a bounded length so typing stays responsive.
@@ -42,7 +42,12 @@ import SwiftUI
     var historyLoading = false
     var allHistory: [SearchItem] = []
     private var usageObserver: NSObjectProtocol?
-    var history: [SearchItem] = []
+    var history: [SearchItem] = [] { didSet { invalidateSearchIndex() } }
+    var cachedSearchPool: [SearchItem]?
+    var cachedLocalIndex: LocalIndex?
+    var cachedTabsFresh = false
+    var searchIndexRevision = 0
+    func invalidateSearchIndex() { cachedSearchPool = nil; cachedLocalIndex = nil; searchIndexRevision += 1 }
     var searchPages: [SearchItem] = []
     var siteSearches: [Recipe] = []
     var historyAt = Date.distantPast
@@ -53,6 +58,23 @@ import SwiftUI
     // StepFun web search context for the current query, given to layer 3 and cached per query.
     var webHits: [SearchItem] = []
     var webCache: [String: [WebResult]] = [:]
+    var webCacheDates: [String: Date] = [:]
+    static let webCacheTTL: TimeInterval = 5 * 60
+    var foregroundTask: Task<Void, Never>?
+    var scheduleTask: Task<Void, Never>?
+    var foregroundRequestID: UUID?
+    func stopForeground() {
+        foregroundTask?.cancel(); foregroundTask = nil
+        scheduleTask?.cancel(); scheduleTask = nil
+        foregroundRequestID = nil; generating = false; thinking = false
+    }
+    func clearWebCache() {
+        webCache = [:]; webCacheDates = [:]; webCacheSettings = nil
+        for request in webRequests.values { request.task.cancel() }
+        webRequests = [:]
+    }
+    var webCacheSettings: Settings?
+    var webRequests: [String: (id: UUID, settings: Settings, task: Task<[WebResult], Never>)] = [:]
     var aiPicks: [String: Double] = [:]
     var aiActions: [SearchItem] = []
     var aiCandidates: [SearchItem] = []
@@ -67,6 +89,7 @@ import SwiftUI
     let updater = Updater()
     let bridge = BrowserBridge()
     let ai = AIClient()
+    let foregroundAI = AIClient(timeout: 15)
     private var timer: Timer?
     private var pasteCount = NSPasteboard.general.changeCount
     @Published private var clipText: String?
@@ -209,7 +232,7 @@ import SwiftUI
             try JSONEncoder().encode(updated).write(to: settingsPath, options: .atomic)
             stopJobs()
             if listening { _ = voice.stop(); listening = false }
-            searchGeneration += 1; webCache = [:]; resetAI()
+            searchGeneration += 1; clearWebCache(); resetAI()
             settings = updated
             browserTabs = []; browserUpdated = .distantPast
             pendingJumps = [:]

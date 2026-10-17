@@ -38,7 +38,7 @@ enum RuntimeChecks {
         let file = localConfig(settings)
         let local = settings.isCustom ? file?.customQuick ?? file?.quick : file?.quick
         let key = local?.baseURL == settings.foregroundURL ? local?.apiKey ?? "" : settings.isCustom ? Keychain.read(settings.foregroundAccount) : summaryConfiguration(settings).apiKey
-        return AIConfiguration(baseURL: settings.foregroundURL, modelID: settings.foregroundModel, apiKey: key, jsonMode: settings.jsonMode, reasoningEffort: settings.isCustom ? nil : "low")
+        return AIConfiguration(baseURL: settings.foregroundURL, modelID: settings.foregroundModel, apiKey: key, jsonMode: settings.jsonMode, reasoningEffort: settings.isCustom ? nil : "low", maxTokens: 600)
     }
     static func stepPlanConfiguration(_ settings: Settings) -> AIConfiguration {
         let file = localConfig(settings)
@@ -119,9 +119,11 @@ enum RuntimeChecks {
         } catch { print("Patterns: FAIL · \(error.localizedDescription)") }
         start = Date()
         do {
-            let payload = Assistant.payload(query: "deepseek github", current: nil, clipboard: nil, candidates: [], recipes: [], searches: [], patterns: [])
+            let payload = Assistant.payload(query: "deepseek github", candidates: [], recipes: [], searches: [], patterns: [])
             let result = try await AIClient().complete(AIActions.self, configuration: quickConfiguration(settings), system: Assistant.actionPrompt, payload: payload)
-            print("Launcher (\(quickConfiguration(settings).modelID)): \(result.actions.isEmpty ? "FAIL no action" : "PASS") · \(ms(start)) ms · \(Assistant.validated(result).compactMap(\.url).joined(separator: " "))")
+            let templates = Assistant.templates(query: "deepseek github", candidates: [], recipes: [], searches: [], patterns: [])
+            let actions = Assistant.validated(result, query: "deepseek github", templates: templates)
+            print("Launcher (\(quickConfiguration(settings).modelID)): \(actions.isEmpty ? "FAIL no verified action" : "PASS") · \(ms(start)) ms · \(actions.compactMap(\.url).joined(separator: " "))")
         } catch { print("Launcher: FAIL · \(error.localizedDescription)") }
     }
 }
@@ -153,16 +155,19 @@ extension RuntimeChecks {
         return WebSearch.items(found).map { var item = $0; item.layer = "联网结果"; return item }
     }
     static func ms(_ start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
-    static func generate(_ query: String, clipboard: String?, candidates: [SearchItem], data: SearchData, layers: Layers) async throws -> AIActions {
-        let payload = Assistant.payload(query: query, current: nil, clipboard: clipboard, candidates: candidates, recipes: data.memory.recipes, searches: layers.entries, patterns: data.memory.patterns)
+    static func generate(_ query: String, candidates: [SearchItem], data: SearchData, layers: Layers) async throws -> AIActions {
+        let payload = Assistant.payload(query: query, candidates: candidates, recipes: data.memory.recipes, searches: layers.entries, patterns: data.memory.patterns)
         return try await AIClient().complete(AIActions.self, configuration: quickConfiguration(data.settings), system: Assistant.actionPrompt, payload: payload)
+    }
+    static func validated(_ result: AIActions, query: String, candidates: [SearchItem], data: SearchData, layers: Layers) -> [SearchItem] {
+        Assistant.validated(result, query: query, candidates: candidates,
+                            templates: Assistant.templates(query: query, candidates: candidates, recipes: data.memory.recipes, searches: layers.entries, patterns: data.memory.patterns))
     }
 
     // Runs the three launcher layers on real history and memory for one query; nothing is stored.
-    // STEPBAR_CLIPBOARD=<text> stands in for the clipboard.
     static func searchCheck(_ query: String) async {
         var start = Date()
-        let data = loadSearchData(), layers = layers(data), clipboard = ProcessInfo.processInfo.environment["STEPBAR_CLIPBOARD"]
+        let data = loadSearchData(), layers = layers(data)
         print("index: \(data.history.count) pages · \(data.memory.notes.count) understood · \(data.memory.patterns.count) patterns · \(data.pages.count) with text · \(ms(start)) ms")
         start = Date()
         let (direct, matches) = layers.history(query)
@@ -170,22 +175,23 @@ extension RuntimeChecks {
         for item in direct.prefix(3) { print("  → \(item.title.prefix(50)) <\((item.url ?? "").prefix(80))>") }
         for item in matches.prefix(5) { print("  [\(item.kind.rawValue)] \(item.title.prefix(60))\(item.note.map { " · \($0)" } ?? "")") }
         start = Date()
-        let semantic = Semantic.match(query: query, pool: layers.pool, pages: data.pages, boost: layers.boosts(query), limit: 10)
+        let semantic = LocalIndex(pool: layers.pool).match(query: query, boost: layers.boosts(query), limit: 30)
         print("L2 语义匹配 \(ms(start)) ms:")
         for item in semantic.prefix(5) { print("  [\(item.kind.rawValue)] \(item.title.prefix(50)) · \(item.purpose.prefix(40))") }
         start = Date()
-        let web = await webItems(query, settings: data.settings)
+        let webTask = Task { await webItems(query, settings: data.settings) }
+        let web = await SoftDeadline.wait(for: webTask) ?? []
         print("联网搜索 \(ms(start)) ms:\(WebSearch.allows(query) && data.settings.webSearch ? "" : " 跳过")")
         for item in web.prefix(5) { print("  \(item.title.prefix(40)) <\(SearchItem.short(item.url ?? "").prefix(60))> \(item.content.prefix(50))") }
-        let candidates = layers.candidates(query, semantic: semantic) + web
+        let candidates = layers.candidates(query, semantic: semantic, web: web)
         start = Date()
         do {
-            let result = try await generate(query, clipboard: clipboard, candidates: candidates, data: data, layers: layers)
+            let result = try await generate(query, candidates: candidates, data: data, layers: layers)
             print("L3 ✦ Step \(ms(start)) ms · \(result.intent ?? "-")")
-            for (id, confidence) in Assistant.picks(result, from: candidates).sorted(by: { $0.value > $1.value }) {
+            for (id, confidence) in Assistant.picks(result, from: candidates, query: query).sorted(by: { $0.value > $1.value }) {
                 print("  pick \(Int(confidence * 100))% \(candidates.first { $0.id == id }.map { "[\($0.layer)] \($0.title.prefix(60))" } ?? id)")
             }
-            for action in Assistant.validated(result) { print("  生成: \(action.title) <\(action.url ?? "")>") }
+            for action in validated(result, query: query, candidates: candidates, data: data, layers: layers) { print("  生成: \(action.title) <\(action.url ?? "")>") }
         } catch { print("L3 failed: \(error.localizedDescription)") }
     }
 
@@ -194,17 +200,19 @@ extension RuntimeChecks {
         let data = loadSearchData(), layers = layers(data)
         print("model \(quickConfiguration(data.settings).modelID) · effort \(quickConfiguration(data.settings).reasoningEffort ?? "-")")
         var total = 0
+        let index = LocalIndex(pool: layers.pool)
         for query in queries {
-            let semantic = Semantic.match(query: query, pool: layers.pool, pages: data.pages, limit: 10)
+            let semantic = index.match(query: query, boost: layers.boosts(query), limit: 30)
             var start = Date()
-            let web = await webItems(query, settings: data.settings), searchMS = ms(start)
-            let candidates = layers.candidates(query, semantic: semantic) + web
+            let webTask = Task { await webItems(query, settings: data.settings) }
+            let web = await SoftDeadline.wait(for: webTask) ?? [], searchMS = ms(start)
+            let candidates = layers.candidates(query, semantic: semantic, web: web)
             start = Date()
             do {
-                let result = try await generate(query, clipboard: nil, candidates: candidates, data: data, layers: layers)
+                let result = try await generate(query, candidates: candidates, data: data, layers: layers)
                 let took = ms(start); total += took
-                let picks = Assistant.picks(result, from: candidates).sorted { $0.value > $1.value }.compactMap { id, p in candidates.first { $0.id == id }.map { "\(Int(p * 100))% \($0.title.prefix(30))" } }
-                let actions = Assistant.validated(result).map { "\($0.title.prefix(24)) <\(($0.url ?? "").prefix(70))>" }
+                let picks = Assistant.picks(result, from: candidates, query: query).sorted { $0.value > $1.value }.compactMap { id, p in candidates.first { $0.id == id }.map { "\(Int(p * 100))% \($0.title.prefix(30))" } }
+                let actions = validated(result, query: query, candidates: candidates, data: data, layers: layers).map { "\($0.title.prefix(24)) <\(($0.url ?? "").prefix(70))>" }
                 print("\(String(format: "%5d", took)) ms (+联网 \(searchMS) ms) 「\(query)」 \(result.intent ?? "-")\n      picks: \(picks.joined(separator: " · "))\n      actions: \(actions.joined(separator: " · "))")
             } catch { print("  fail 「\(query)」 \(error.localizedDescription)") }
         }
@@ -221,21 +229,22 @@ extension RuntimeChecks {
         let cases = data.memory.searchLog.reversed().filter { seen.insert(Semantic.normalize($0.query) + "|" + $0.chosen).inserted }.prefix(limit)
         guard !cases.isEmpty else { print("no logged searches yet: use ⌘M for a while, then run again"); return }
         var top1 = 0, top3 = 0, recalled = 0, aiTop1 = 0, aiRuns = 0, misses: [String] = []
+        let index = LocalIndex(pool: layers.pool)
         for log in cases {
             let (direct, matches) = layers.history(log.query), local = direct + matches
-            let candidates = layers.candidates(log.query, semantic: Semantic.match(query: log.query, pool: layers.pool, pages: data.pages, limit: 10))
+            let candidates = layers.candidates(log.query, semantic: index.match(query: log.query, limit: 30))
             let rank = local.firstIndex { $0.id == log.chosen }
             if rank == 0 { top1 += 1 }
             if let rank, rank < 3 { top3 += 1 }
             if candidates.contains(where: { $0.id == log.chosen }) { recalled += 1 } else { misses.append("「\(log.query)」→ \(log.title.prefix(40))") }
             if ai && rank != 0 && candidates.contains(where: { $0.id == log.chosen }) {
                 aiRuns += 1
-                if let result = try? await generate(log.query, clipboard: nil, candidates: candidates, data: data, layers: layers),
-                   Assistant.picks(result, from: candidates).max(by: { $0.value < $1.value })?.key == log.chosen { aiTop1 += 1 }
+                if let result = try? await generate(log.query, candidates: candidates, data: data, layers: layers),
+                   Assistant.picks(result, from: candidates, query: log.query).max(by: { $0.value < $1.value })?.key == log.chosen { aiTop1 += 1 }
             }
         }
         let n = Double(cases.count)
-        print("cases \(cases.count) · L1 top1 \(Int(Double(top1) / n * 100))% · L1 top3 \(Int(Double(top3) / n * 100))% · L1+L2 recall \(Int(Double(recalled) / n * 100))%")
+        print("cases \(cases.count) · L1 top1 \(Int(Double(top1) / n * 100))% · L1 top3 \(Int(Double(top3) / n * 100))% · 融合 Recall@5 \(Int(Double(recalled) / n * 100))%")
         if ai { print("L3 picked the target first in \(aiTop1)/\(aiRuns) cases where L1 top1 missed") }
         for miss in misses.prefix(10) { print("  not in candidates: \(miss)") }
     }

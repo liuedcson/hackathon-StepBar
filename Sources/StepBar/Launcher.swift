@@ -1,10 +1,9 @@
 import AppKit
 
 // The launcher answers in three layers, all as fast as possible:
-//   1. 历史匹配 — local and instant: open tabs and Chrome history by title and address, what this query led to before,
-//      learned query entries and URL patterns that take a value from the query, and site searches for a named site.
+//   1. 历史匹配 — original titles and URLs; deterministic actions stay on a separate UI path.
 //   2. 语义匹配 — local and instant: what the background model wrote about each page (purpose, bilingual keywords,
-//      typical requests) and the page text, so other words for the same page still find it.
+//      typical requests), so other words for the same page still find it.
 //   3. ✦ Step — after 150 ms without typing, the typed words go to StepFun web search once; step-3.7-flash then gets
 //      what layers 1 and 2 found, the fresh web results and the learned patterns, picks the answer and, when nothing
 //      fits, builds a URL.
@@ -16,10 +15,9 @@ extension Store {
         searchGeneration += 1
         resetAI(); semanticHits = []; selection = 0
         if !paused && Date().timeIntervalSince(historyAt) > 60 { reloadHistory() }
-        compose()
-        if clipboardActionable { scheduleAI() }
+        queryChanged()
     }
-    func resetAI() { aiPicks = [:]; aiActions = []; aiCandidates = []; webHits = []; intent = nil; thinking = false; generating = false }
+    func resetAI() { stopForeground(); aiPicks = [:]; aiActions = []; aiCandidates = []; webHits = []; intent = nil }
     func reloadHistory() {
         guard !paused, !historyLoading else { return }
         historyLoading = true
@@ -66,10 +64,21 @@ extension Store {
         resetAI(); semanticHits = []; selection = 0
         compose()
         let text = trimmedQuery, epoch = searchGeneration
-        guard !text.isEmpty else { if clipboardActionable { scheduleAI() }; return }
+        guard !text.isEmpty else { return }
         // Layer 2 right away, off the main thread; layer 3 waits for a pause in typing and for layer 2.
-        let pool = searchPool, pages = self.pages, boost = boosts(text)
-        let semantic = Task.detached(priority: .userInitiated) { Semantic.match(query: text, pool: pool, pages: pages, boost: boost, limit: 10) }
+        let pool = searchPool, cached = cachedLocalIndex, revision = searchIndexRevision, boost = boosts(text)
+        let semantic = Task.detached(priority: .userInitiated) { [weak self] in
+            let store = self
+            let index = cached ?? LocalIndex(pool: pool)
+            let hits = index.match(query: text, boost: boost, limit: 30)
+            if cached == nil {
+                await MainActor.run {
+                    guard let store, store.searchIndexRevision == revision else { return }
+                    store.cachedLocalIndex = index
+                }
+            }
+            return hits
+        }
         Task { [weak self] in
             let hits = await semantic.value
             guard let self, epoch == self.searchGeneration else { return }
@@ -82,7 +91,18 @@ extension Store {
     var freshTabs: [SearchItem] {
         Date().timeIntervalSince(browserUpdated) < 60 ? browserTabs.map(SearchItem.tab) : []
     }
-    var searchPool: [SearchItem] { Understand.enrich(freshTabs + commandItems + history, notes: memory.notes) }
+    var searchPool: [SearchItem] {
+        let fresh = Date().timeIntervalSince(browserUpdated) < 60
+        if fresh != cachedTabsFresh { invalidateSearchIndex(); cachedTabsFresh = fresh }
+        if let cachedSearchPool { return cachedSearchPool }
+        let pool = Understand.enrich(freshTabs + history, notes: memory.notes)
+        cachedSearchPool = pool; return pool
+    }
+    var localIndex: LocalIndex {
+        let pool = searchPool
+        if let cachedLocalIndex { return cachedLocalIndex }
+        let index = LocalIndex(pool: pool); cachedLocalIndex = index; return index
+    }
     var duplicateTabs: [BrowserTab] {
         guard Date().timeIntervalSince(browserUpdated) < 60 else { return [] }
         var seen = Set<String>(), extra: [BrowserTab] = []
@@ -111,7 +131,7 @@ extension Store {
     func siteSearchActions(_ text: String, general: Int) -> (targeted: [SearchItem], general: [SearchItem]) { layers.siteSearchActions(text, general: general) }
     func queryWeights(_ text: String) -> [String: Double] { layers.queryWeights(text) }
     var searchEntries: [Recipe] { Layers.entries(siteSearches, patterns: memory.patterns) }
-    func layerCandidates(_ text: String) -> [SearchItem] { layers.candidates(text, semantic: semanticHits) }
+    func layerCandidates(_ text: String) -> [SearchItem] { layers.candidates(text, semantic: semanticHits, web: webHits) }
 
     // MARK: Compose
     func compose() {
@@ -127,19 +147,20 @@ extension Store {
             sections.append(("最近", Array(history.prefix(5))))
         } else {
             let layers = self.layers, (direct, matches) = layers.history(text)
-            sections.append(("✦ Step 推荐", picked(from: direct + matches + semanticHits + webHits + aiCandidates)))
+            sections.append(("✦ Step 推荐", picked(from: aiCandidates)))
             sections.append(("✦ Step 生成", aiActions))
             sections.append(("直达", direct))
+            sections.append(("命令", Ranker.rank(text, in: commandItems, limit: 2)))
             sections.append(("历史匹配", Array(matches.prefix(6))))
             sections.append(("语义匹配", Array(semanticHits.prefix(5))))
             if !Ranker.isLong(text) {
-                let engine = settings.isCustom ? (settings.customSearchMode == "engine" ? WebSearch.engineItem(text, template: settings.searchEngineTemplate) : nil) : layers.webSearch(text)
-                sections.append(("网页", layers.siteSearchActions(text, general: Inference.recalling(text) ? 0 : 2).general + [engine].compactMap { $0 }))
+                let engine = searchFallback(text)
+                sections.append(("网页", (WebSearch.allows(text) ? layers.siteSearchActions(text, general: 2).general : []) + [engine].compactMap { $0 }))
             }
         }
         var seen = Set<String>(), merged: [SearchItem] = []
         for (name, items) in sections {
-            for var item in items where seen.insert(item.id).inserted {
+            for var item in items where seen.insert(Fusion.identity(item)).inserted {
                 item.section = name; merged.append(item)
             }
         }
@@ -159,27 +180,51 @@ extension Store {
     // MARK: Layer 3
     // The answer is already obvious: the same query led to the same page at least twice, or a link was typed.
     func confident(_ text: String) -> Bool {
-        if let top = queryWeights(text).values.max(), top >= 2 { return true }
+        if let first = layers.history(text).matches.first, (queryWeights(text)[first.id] ?? 0) >= 2 { return true }
         return Inference.safeURL(text) != nil
     }
+    func searchFallback(_ text: String) -> SearchItem? {
+        guard WebSearch.allows(text), settings.webSearch else { return nil }
+        if let targeted = layers.siteSearchActions(text, general: 0).targeted.first { return targeted }
+        if settings.isCustom {
+            // Never silently send a custom-provider query to Google's search.
+            return settings.customSearchMode == "engine" ? WebSearch.engineItem(text, template: settings.searchEngineTemplate) : nil
+        }
+        return layers.webSearch(text)
+    }
     func scheduleAI(after semantic: Task<[SearchItem], Never>? = nil) {
-        guard settings.aiEnabled, !paused else { return }
-        let epoch = searchGeneration, text = trimmedQuery
-        if !text.isEmpty && confident(text) { return }
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Store.debounce)
-            guard let self, epoch == self.searchGeneration, !self.paused, self.settings.aiEnabled else { return }
+        guard settings.aiEnabled, !paused, !trimmedQuery.isEmpty else { return }
+        let epoch = searchGeneration, text = trimmedQuery, savedSettings = settings
+        if confident(text) {
+            scheduleTask?.cancel(); scheduleTask = nil
+            let pool = layerCandidates(text)
+            aiCandidates = pool
+            if let first = pool.first, (queryWeights(text)[first.id] ?? 0) >= 2 { aiPicks = [first.id: 1] }
+            compose(); return
+        }
+        scheduleTask?.cancel()
+        scheduleTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: Store.debounce) } catch { return }
+            guard let self, epoch == self.searchGeneration, !self.paused, self.settings == savedSettings, self.settings.aiEnabled else { return }
             let web = self.webLookup(text)
-            if let semantic { _ = await semantic.value }
-            if let web {
+            // Start the deadline with the search, not after L2 has finished.
+            let timelyWeb = web.map { task in Task { await SoftDeadline.wait(for: task) } }
+            defer { timelyWeb?.cancel() }
+            if let semantic {
+                let found = await semantic.value
+                guard epoch == self.searchGeneration, !self.paused, self.settings == savedSettings else { return }
+                self.semanticHits = found
+            }
+            if let timelyWeb {
                 self.thinking = true; self.intent = "正在联网搜索「\(text.prefix(30))」…"
-                let found = await web.value
-                guard epoch == self.searchGeneration else { return }
+                let found = await timelyWeb.value
+                guard epoch == self.searchGeneration, !self.paused, self.settings == savedSettings else { return }
                 self.thinking = false; self.intent = nil
-                self.webHits = WebSearch.items(found).map { var item = $0; item.layer = "联网结果"; return item }
+                self.webHits = WebSearch.items(found ?? []).map { var item = $0; item.layer = "联网结果"; return item }
                 self.compose()
             }
-            guard epoch == self.searchGeneration, !self.paused, self.settings.aiEnabled else { return }
+            guard !Task.isCancelled, epoch == self.searchGeneration, !self.paused, self.settings == savedSettings, self.settings.aiEnabled else { return }
+            guard !self.generating else { return }
             self.understand()
         }
     }
@@ -188,63 +233,90 @@ extension Store {
         guard settings.webSearch, WebSearch.allows(text) else { return nil }
         if settings.isCustom && settings.customSearchMode != "api" { return nil }
         let key = Semantic.normalize(text)
-        if let cached = webCache[key] { return Task { cached } }
+        if webCacheSettings != settings { clearWebCache(); webCacheSettings = settings }
+        if let cached = cachedWebResults(key: key) { return Task { cached } }
+        if let pending = webRequests[key], pending.settings == settings { return pending.task }
         let saved = settings
         let config = saved.isCustom ? AIConfiguration(baseURL: "", modelID: "", apiKey: "") : RuntimeChecks.stepPlanConfiguration(settings)
         if !saved.isCustom && config.apiKey.isEmpty { return nil }
         let searchKey = saved.isCustom ? RuntimeChecks.searchKey(saved) : ""
-        return Task { [weak self] in
+        let id = UUID()
+        let task = Task<[WebResult], Never> { [weak self] in
             let result = saved.isCustom ? try? await WebSearch.customSearch(text, endpoint: saved.customSearchURL, apiKey: searchKey) : try? await WebSearch.search(text, configuration: config)
+            if let self, self.webRequests[key]?.id == id { self.webRequests[key] = nil }
             guard let found = result else { return [] }
-            if let self { if self.webCache.count > 100 { self.webCache = [:] }; self.webCache[key] = found }
+            // A late response can warm the cache, never mutate candidates or
+            // trigger a second model call. Changed settings cannot seed it.
+            self?.cacheWebResults(found, key: key, settings: saved)
             return found
         }
+        webRequests[key] = (id, saved, task)
+        return task
+    }
+    func cacheWebResults(_ found: [WebResult], key: String, settings saved: Settings) {
+        guard !paused, settings == saved, webCacheSettings == saved, !found.isEmpty else { return }
+        if webCache.count >= 100, webCache[key] == nil, let oldest = webCacheDates.min(by: { $0.value < $1.value })?.key {
+            webCache[oldest] = nil; webCacheDates[oldest] = nil
+        }
+        webCache[key] = found; webCacheDates[key] = Date()
+    }
+    func cachedWebResults(key: String, now: Date = Date()) -> [WebResult]? {
+        guard let date = webCacheDates[key], now.timeIntervalSince(date) < Self.webCacheTTL else {
+            webCache[key] = nil; webCacheDates[key] = nil; return nil
+        }
+        return webCache[key]
     }
     func understand() {
         let text = trimmedQuery
-        var candidates: [SearchItem]
-        if text.isEmpty {
-            guard let copied = copiedText else { return }
-            let pool = freshTabs + history
-            var found = learnedActions(copied) + clipboardItems(copied, pool: pool)
-            // A copied title or name is looked up like a typed one; a chat sentence is not.
-            if !Inference.chatty(copied), Inference.safeURL(copied) == nil { found += Ranker.recall(copied, in: Understand.enrich(pool, notes: memory.notes), limit: 6) }
-            candidates = Semantic.distinct(found, limit: 10)
-        } else {
-            candidates = layerCandidates(text) + webHits.prefix(WebSearch.count)
-        }
+        guard !text.isEmpty else { return }
+        let candidates = layerCandidates(text)
         aiCandidates = candidates
         generate(candidates: candidates)
     }
     @discardableResult func generate(candidates: [SearchItem]? = nil) -> Task<Void, Never>? {
         let text = trimmedQuery
-        guard settings.aiEnabled, !paused, !generating, !text.isEmpty || copiedText != nil else { return nil }
-        let pool = candidates ?? (text.isEmpty ? aiCandidates : layerCandidates(text))
+        guard settings.aiEnabled, !paused, !generating, !text.isEmpty else { return nil }
+        // Manual Tab generation supersedes the queued automatic request.
+        scheduleTask?.cancel(); scheduleTask = nil
+        let pool = Array((candidates ?? layerCandidates(text)).prefix(Fusion.limit))
         if candidates == nil { aiCandidates = pool }
-        let epoch = searchGeneration, config = RuntimeChecks.quickConfiguration(settings)
-        guard !config.apiKey.isEmpty else { return nil }
-        let input = Assistant.payload(query: text, current: currentPage, clipboard: copiedText, candidates: pool, recipes: memory.recipes,
+        let epoch = searchGeneration, savedSettings = settings, config = RuntimeChecks.quickConfiguration(settings)
+        guard !config.apiKey.isEmpty else { intent = "未配置模型，仍可选择本地结果"; return nil }
+        let templates = Assistant.templates(query: text, candidates: pool, recipes: memory.recipes, searches: searchEntries, patterns: memory.patterns)
+        let input = Assistant.payload(query: text, candidates: pool, recipes: memory.recipes,
                                       searches: searchEntries, patterns: memory.patterns)
         generating = true
-        return Task { [weak self] in
+        let requestID = UUID(); foregroundRequestID = requestID
+        let task = Task { [weak self] in
             guard let self else { return }
-            do {
-                let result = try await self.ai.complete(AIActions.self, configuration: config, system: Assistant.actionPrompt, payload: input)
-                guard epoch == self.searchGeneration else { return }
-                // Recalling something seen ("上周看的 rust 文章"): a fresh web search is not it; the plain fallback row stays.
-                let engines = ["www.google.com", "www.bing.com", "www.baidu.com", "duckduckgo.com", "www.sogou.com", "cn.bing.com"]
-                self.aiActions = Assistant.validated(result).filter { action in
-                    !(Inference.recalling(text) && engines.contains(action.url.flatMap { URL(string: $0)?.host } ?? ""))
+            defer {
+                if self.foregroundRequestID == requestID {
+                    self.generating = false; self.foregroundTask = nil; self.foregroundRequestID = nil
                 }
-                self.aiPicks = Assistant.picks(result, from: pool)
-                self.intent = result.intent.map { Privacy.text($0) }.flatMap { $0.isEmpty ? nil : String($0.prefix(120)) }
+            }
+            do {
+                let result = try await self.foregroundAI.complete(AIActions.self, configuration: config, system: Assistant.actionPrompt, payload: input)
+                guard !Task.isCancelled, self.foregroundRequestID == requestID, epoch == self.searchGeneration, !self.paused, self.settings == savedSettings else { return }
+                // A fresh web page or generated search cannot stand in for recalled history.
+                self.aiActions = Assistant.validated(result, query: text, candidates: pool, templates: templates)
+                self.aiPicks = Assistant.picks(result, from: pool, query: text)
+                if !self.aiPicks.isEmpty { self.aiActions = [] }
+                if self.aiActions.isEmpty && self.aiPicks.isEmpty, let fallback = self.searchFallback(text) {
+                    self.aiActions = [fallback]
+                }
+                self.intent = result.intent.map { Privacy.text($0) }.flatMap { $0.isEmpty ? nil : String($0.prefix(20)) }
+                if self.aiPicks.isEmpty && self.aiActions.isEmpty { self.intent = "未找到可靠入口，可继续选择本地结果" }
+                else if self.aiPicks.isEmpty && self.aiActions.first?.note != "✦ Step 生成" { self.intent = "未找到直达答案，已提供搜索入口" }
                 self.compose()
             } catch {
-                guard epoch == self.searchGeneration else { return }
-                self.intent = "AI 生成失败：\(error.localizedDescription)"
+                guard !Task.isCancelled, self.foregroundRequestID == requestID, epoch == self.searchGeneration, !self.paused, self.settings == savedSettings else { return }
+                if let fallback = self.searchFallback(text) { self.aiActions = [fallback] }
+                self.intent = "模型暂不可用，仍可选择本地结果或搜索入口"
+                self.compose()
             }
-            if epoch == self.searchGeneration { self.generating = false }
         }
+        foregroundTask = task
+        return task
     }
 
     // MARK: Voice

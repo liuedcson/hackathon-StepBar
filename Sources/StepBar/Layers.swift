@@ -62,6 +62,11 @@ struct Layers {
             for pattern in memory.patterns where pattern.shape == "text" && pattern.examples.contains(where: { $0.contains("/") }) && (named.isEmpty || named.contains { pattern.host.hasSuffix($0) }) {
                 if let url = PatternMiner.fill(pattern, word) { items.append(.action(title: "\(pattern.label) · \(word)", url: url, note: "网址模式")) }
             }
+            // Explicit owner/repository on an explicitly named GitHub site is
+            // a known route, not a model's guessed organization or project.
+            if named.contains("github.com"), word.range(of: "^[A-Za-z0-9_-]+/[A-Za-z0-9._-]+$", options: .regularExpression) != nil, !word.contains("..") {
+                items.append(.action(title: "打开 GitHub 仓库 · \(word)", url: "https://github.com/\(word)", note: "明确的仓库路径"))
+            }
         }
         if let url = Inference.safeURL(text), let clean = Privacy.url(text) { items.append(.action(title: "打开 \(url.host ?? "链接")", url: clean, note: "链接")) }
         var seen = Set<String>()
@@ -112,18 +117,16 @@ struct Layers {
         parts.queryItems = [URLQueryItem(name: "q", value: text)]
         return parts.string.map { .action(title: "在 Google 搜索「\(text)」", url: $0, note: "网页搜索") }
     }
-    // Layer 1: everything that matches by name, address or past use.
+    // Direct actions are a separate UI path, never model candidate slots.
+    // Layer 1 only matches original title/address; preferences do not inject pages.
     func history(_ text: String) -> (direct: [SearchItem], matches: [SearchItem]) {
-                let direct = learnedActions(text) + siteSearchActions(text, general: 0).targeted
-        let found = Ranker.isLong(text) ? Ranker.recall(text, in: pool, limit: 12) : Ranker.rank(text, in: pool, boost: boosts(text), limit: 12)
-        let searches = BrowserHistory.matchingSearches(text, in: searchPages).prefix(2)
-        return (direct, Semantic.distinct(learnedChoices(text, pool: pool) + found + searches, limit: 12))
+        let direct = Inference.recalling(text) ? [] : learnedActions(text) + siteSearchActions(text, general: 0).targeted
+        let raw = (pool + searchPages).filter { $0.kind == .tab || $0.kind == .history }
+        let found = Ranker.isLong(text) ? Ranker.recall(text, in: raw, limit: 30, rawOnly: true) : Ranker.rank(text, in: raw, limit: 30, rawOnly: true)
+        return (direct, Semantic.distinct(found, limit: 30))
     }
     // What the fast model sees: the best of layers 1 and 2, each tagged with the layer that found it.
-    func candidates(_ text: String, semantic: [SearchItem]) -> [SearchItem] {
-        let (direct, matches) = history(text)
-        let l1 = (Array(direct.prefix(3)) + Array(matches.prefix(7))).map { var item = $0; item.layer = "历史匹配"; return item }
-        let l2 = semantic.prefix(8).map { var item = $0; item.layer = "语义匹配"; return item }
-        return Semantic.distinct(l1 + l2, limit: 14)
+    func candidates(_ text: String, semantic: [SearchItem], web: [SearchItem] = []) -> [SearchItem] {
+        Fusion.merge(query: text, l1: history(text).matches, l2: semantic, web: web, boost: boosts(text))
     }
 }

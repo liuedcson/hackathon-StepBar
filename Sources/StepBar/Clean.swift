@@ -44,15 +44,12 @@ enum Clean {
         if segments == ["url"], parts.host?.lowercased().contains("google.") == true { return true }
         return false
     }
-    // One entry per page: same host + path + title are query-parameter variants; keep the most visited
-    // and add up the visits. Same title on different paths is left alone (SPAs with a fixed title).
+    // Only proven tracking variants are the same page. Preserve semantic query
+    // parameters, path case and SPA fragments even when the titles are identical.
     static func merge(_ items: [SearchItem]) -> [SearchItem] {
         var groups: [String: SearchItem] = [:], order: [String] = []
         for item in items {
-            var key = item.id
-            if let url = item.url, let parts = URLComponents(string: url), let host = parts.host, item.title.count >= 4 {
-                key = host.lowercased() + parts.path.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "|" + item.title.lowercased()
-            }
+            let key = Fusion.identity(item)
             guard var kept = groups[key] else { groups[key] = item; order.append(key); continue }
             let newest = max(kept.date ?? .distantPast, item.date ?? .distantPast)
             if item.visits > kept.visits { let total = kept.visits; kept = item; kept.visits += total } else { kept.visits += item.visits }

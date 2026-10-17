@@ -21,6 +21,10 @@ func XCTAssertNil<T>(_ value: T?, file: StaticString = #file, line: UInt = #line
         tests.testPatternMiner()
         tests.testLayers()
         tests.testAssistantPayload()
+        try tests.testRetrievalPipeline()
+        tests.testDifficultRetrieval()
+        await tests.testSoftDeadline()
+        try tests.testDecisionSafety()
         try await tests.testWebSearch()
         try tests.testEndpointAndPrivacy()
         try await tests.testOpenAICompatibleTransport()
@@ -97,7 +101,7 @@ func XCTAssertNil<T>(_ value: T?, file: StaticString = #file, line: UInt = #line
         let notes = ["u:rl": PageNote(title: rl.title, purpose: "多环境强化学习训练指南", terms: ["强化学习", "RL"], asks: ["强化学习那篇"])]
         let hits = Semantic.match(query: "昨天看的强化学习那篇", pool: Understand.enrich([other, doc, rl], notes: notes), pages: pages)
         XCTAssertEqual(hits.first?.id, rl.id)
-        XCTAssertEqual(hits.contains { $0.id == doc.id && $0.content.contains("强化学习") }, true)
+        XCTAssertEqual(hits.contains { $0.id == doc.id }, false) // Raw body is not Step 5 structured data.
         XCTAssertEqual(hits.contains { $0.id == other.id }, false)
         XCTAssertEqual(Semantic.core("昨天看的强化学习那篇"), "强化学习")
         XCTAssertNil(PageIndex.sanitized(PageText(url: "https://a.example/?token=x", title: "t", text: "x")))
@@ -152,7 +156,7 @@ func XCTAssertNil<T>(_ value: T?, file: StaticString = #file, line: UInt = #line
         XCTAssertEqual(Inference.learnable("https://www.zhihu.com/search?q={value}", value: "rlhf"), true)
         XCTAssertEqual(Inference.learnable("https://shop.example/product/{value}", value: "a1b2c3d4e5f60718293a4b5c6d7e8f90"), true)
 
-        // Candidates: search pages and login hops leave; parameter variants of one page merge, visits add up.
+        // Search/login pages leave; semantic query variants are distinct even with identical titles.
         let items = [
             SearchItem(id: "u:1", kind: .history, title: "Quarterly plan", subtitle: "", url: "https://wiki.example/plan?view=1", visits: 2),
             SearchItem(id: "u:2", kind: .history, title: "Quarterly plan", subtitle: "", url: "https://wiki.example/plan?view=2", visits: 5),
@@ -161,8 +165,8 @@ func XCTAssertNil<T>(_ value: T?, file: StaticString = #file, line: UInt = #line
             SearchItem(id: "u:5", kind: .history, title: "Sign in", subtitle: "", url: "https://id.example/login", visits: 9)
         ]
         let (candidates, searches) = BrowserHistory.split(items)
-        XCTAssertEqual(candidates.map(\.id).sorted(), ["u:2", "u:3"])
-        XCTAssertEqual(candidates.first { $0.id == "u:2" }?.visits, 7)
+        XCTAssertEqual(candidates.map(\.id).sorted(), ["u:1", "u:2", "u:3"])
+        XCTAssertEqual(candidates.first { $0.id == "u:2" }?.visits, 5)
         XCTAssertEqual(searches.map(\.id), ["u:4"])
         XCTAssertEqual(BrowserHistory.matchingSearches("swift", in: searches).count, 1)
         XCTAssertEqual(BrowserHistory.matchingSearches("rust", in: searches).count, 0)
@@ -183,7 +187,7 @@ func XCTAssertNil<T>(_ value: T?, file: StaticString = #file, line: UInt = #line
             AIAction(title: "脚本", url: "javascript:alert(1)"),
             AIAction(title: "带密钥", url: "https://example.com/?token=abc")
         ]))
-        XCTAssertEqual(actions.map(\.url), ["https://www.google.com/search?q=step"])
+        XCTAssertEqual(actions.count, 0) // Speculative URLs without template/candidate evidence are rejected.
         XCTAssertEqual(SearchItem.short("https://example.com/a?b=1"), "example.com/a?b=1")
 
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("stepbar-test-\(UUID().uuidString)")

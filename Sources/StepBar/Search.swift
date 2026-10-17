@@ -24,12 +24,17 @@ struct SearchItem: Identifiable, Equatable {
     var purpose = ""
     // Which launcher layer found it (历史匹配 / 语义匹配), told to the model.
     var layer = ""
+    var asks: [String] = []
+    var entity = ""
+    var pageKind = "other"
+    var understandingConfidence = 1.0
 
     static func == (a: SearchItem, b: SearchItem) -> Bool {
         a.id == b.id && a.section == b.section && a.note == b.note && a.score == b.score &&
         a.title == b.title && a.subtitle == b.subtitle && a.url == b.url &&
         a.kind == b.kind && a.tab == b.tab && a.command == b.command && a.content == b.content &&
-        a.aliases == b.aliases && a.keywords == b.keywords && a.purpose == b.purpose && a.layer == b.layer
+        a.aliases == b.aliases && a.keywords == b.keywords && a.purpose == b.purpose && a.layer == b.layer &&
+        a.asks == b.asks && a.entity == b.entity && a.pageKind == b.pageKind && a.understandingConfidence == b.understandingConfidence
     }
     // Some sites embed zero-width characters in page titles.
     static func clean(_ text: String) -> String {
@@ -80,16 +85,16 @@ enum Ranker {
     // Pasted paragraphs are not keyword queries; they go through loose recall instead.
     static func isLong(_ query: String) -> Bool { query.count > 60 || tokens(query).count > 6 }
     // Every token must match some field. Ordering combines match quality, kind and frecency.
-    static func match(_ item: SearchItem, tokens: [String], boost: Double = 0, now: Date = Date()) -> Double? {
+    static func match(_ item: SearchItem, tokens: [String], boost: Double = 0, now: Date = Date(), rawOnly: Bool = false) -> Double? {
         guard !tokens.isEmpty else { return nil }
         let title = item.title.lowercased(), alias = item.aliases.lowercased(), detail = (item.subtitle + " " + (item.url ?? "")).lowercased()
         var score = 0.0
         for token in tokens {
             if title.hasPrefix(token) { score += 5 }
             else if wordStart(token, in: title) { score += 4 }
-            else if title.contains(token) || alias.contains(token) { score += 3 }
-            else if token.count >= 2, item.keywords.contains(where: { $0.lowercased().contains(token) }) { score += 2 }
-            else if detail.contains(token) { score += 1.5 }
+            else if title.contains(token) && (!rawOnly || token.count >= 3 || Semantic.has(token, in: title)) || (!rawOnly && alias.contains(token)) { score += 3 }
+            else if !rawOnly, token.count >= 2, item.keywords.contains(where: { $0.lowercased().contains(token) }) { score += 2 }
+            else if rawOnly ? Semantic.has(token, in: (item.url ?? "").lowercased()) : detail.contains(token) { score += 1.5 }
             else { return nil }
         }
         if title == tokens.joined(separator: " ") { score += 6 }
@@ -101,38 +106,54 @@ enum Ranker {
         if let date = item.date { score += max(0, 2 - now.timeIntervalSince(date) / 43200) }
         return score + boost
     }
-    static func rank(_ query: String, in pool: [SearchItem], boost: [String: Double] = [:], limit: Int = 30) -> [SearchItem] {
-        let words = tokens(query)
+    static func rank(_ query: String, in pool: [SearchItem], boost: [String: Double] = [:], limit: Int = 30, rawOnly: Bool = false) -> [SearchItem] {
+        let window = rawOnly && Inference.recalling(query) ? Self.window(query) : nil
+        let text = window == nil ? query : Semantic.core(query)
+        let words = tokens(text)
         var seen = Set<String>()
         var results: [SearchItem] = []
-        for var item in pool where !seen.contains(item.id) {
-            guard let score = match(item, tokens: words, boost: boost[item.id] ?? 0) else { continue }
-            seen.insert(item.id); item.score = score; results.append(item)
+        for var item in pool where !seen.contains(Fusion.identity(item)) {
+            if let window, !(item.date.map(window.contains) ?? false) { continue }
+            let matched = words.isEmpty && window != nil ? 0 : match(item, tokens: words, boost: boost[item.id] ?? 0, rawOnly: rawOnly)
+            guard let score = matched else { continue }
+            seen.insert(Fusion.identity(item)); item.score = score; results.append(item)
         }
-        return Array(results.sorted { $0.score > $1.score }.prefix(limit))
+        return Array(results.sorted {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if window != nil, $0.date != $1.date { return ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            return Fusion.identity($0) < Fusion.identity($1)
+        }.prefix(limit))
     }
 }
 
 extension Ranker {
     // Loose recall for the AI: any word or Chinese bigram may match.
     static func grams(_ query: String) -> [String] {
-        var result: [String] = []
-        for token in tokens(query) {
+        var result: [String] = [], segments: [String] = [], segment = "", previous = 0
+        for char in Semantic.normalize(query) {
+            let cjk = char.unicodeScalars.contains { (0x3400...0x9FFF).contains($0.value) }
+            let kind = cjk ? 2 : (char.isASCII && (char.isLetter || char.isNumber || "_-".contains(char)) ? 1 : 0)
+            if kind != previous || kind == 0 { if !segment.isEmpty { segments.append(segment) }; segment = "" }
+            if kind != 0 { segment.append(char) }
+            previous = kind
+        }
+        if !segment.isEmpty { segments.append(segment) }
+        for token in segments {
             let chars = Array(token)
-            if chars.contains(where: { $0.unicodeScalars.first.map { (0x4E00...0x9FFF).contains($0.value) } ?? false }) && chars.count > 2 {
+            if chars.allSatisfy({ !$0.isASCII }) && chars.count > 2 {
                 for i in 0..<(chars.count - 1) { result.append(String(chars[i...i + 1])) }
-            } else if token.count >= 2 { result.append(token) }
+            } else if token.count >= 2 || token.allSatisfy(\.isNumber) { result.append(token) }
         }
         result = Array(Set(result)).sorted { $0.count != $1.count ? $0.count > $1.count : $0 < $1 }.prefix(24).map { $0 }
         let filler: Set<String> = ["那个", "这个", "一下", "看的", "的那", "那篇", "刚才", "昨天", "今天", "前天", "上周", "最近", "打开", "找一", "找到"]
-        return Array(Set(result).subtracting(filler))
+        return Array(Set(result).subtracting(filler)).sorted()
     }
-    static func recall(_ query: String, in pool: [SearchItem], limit: Int) -> [SearchItem] {
+    static func recall(_ query: String, in pool: [SearchItem], limit: Int, rawOnly: Bool = false) -> [SearchItem] {
         let words = grams(query)
         guard !words.isEmpty else { return [] }
         var scored: [(SearchItem, Int)] = []
         for item in pool {
-            let text = (item.title + " " + (item.url ?? "") + " " + item.aliases).lowercased() as NSString
+            let text = (item.title + " " + (item.url ?? "") + " " + (rawOnly ? "" : item.aliases)).lowercased() as NSString
             let hits = words.filter { text.range(of: $0, options: .literal).location != NSNotFound }.count
             if hits > 0 { scored.append((item, hits)) }
         }

@@ -24,6 +24,29 @@ struct PageNote: Codable, Equatable {
     var asks: [String] = []
     var hadText = false
     var date = Date()
+    var schema = 1
+    var kind = "other"
+    var entity = ""
+    var aliases: [String] = []
+    var confidence = 1.0
+    init(title: String, purpose: String, terms: [String], asks: [String] = [], hadText: Bool = false, date: Date = Date(), schema: Int = 1, kind: String = "other", entity: String = "", aliases: [String] = [], confidence: Double = 1) {
+        self.title = title; self.purpose = purpose; self.terms = terms; self.asks = asks; self.hadText = hadText; self.date = date
+        self.schema = schema; self.kind = kind; self.entity = entity; self.aliases = aliases; self.confidence = confidence
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decode(String.self, forKey: .title)
+        purpose = try c.decodeIfPresent(String.self, forKey: .purpose) ?? ""
+        terms = try c.decodeIfPresent([String].self, forKey: .terms) ?? []
+        asks = try c.decodeIfPresent([String].self, forKey: .asks) ?? []
+        hadText = try c.decodeIfPresent(Bool.self, forKey: .hadText) ?? false
+        date = try c.decodeIfPresent(Date.self, forKey: .date) ?? .distantPast
+        schema = try c.decodeIfPresent(Int.self, forKey: .schema) ?? 1
+        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "other"
+        entity = try c.decodeIfPresent(String.self, forKey: .entity) ?? ""
+        aliases = try c.decodeIfPresent([String].self, forKey: .aliases) ?? []
+        confidence = try c.decodeIfPresent(Double.self, forKey: .confidence) ?? 1
+    }
 }
 // A URL shape the background model found in one site's history ("github.com/{value}" = a repository),
 // checked against real addresses before it is kept.
@@ -115,7 +138,9 @@ enum Inference {
     // Describes something already seen ("上周看的 rust 文章") rather than words to search a site for.
     static func recalling(_ text: String) -> Bool {
         // "deepseek r2 知乎上怎么评价" names where to look: a question, not a memory.
-        (chatty(text) && Sites.mentioned(in: text).isEmpty) || ["上周", "昨天", "前天", "今天", "刚才", "刚刚", "之前", "上次", "那个", "那篇", "这个", "这篇", "的"].contains { text.contains($0) }
+        // Questions, today's news and the grammatical particle “的” are not
+        // evidence of a past visit. Use explicit recall cues consistently.
+        ["上周看的", "昨天看的", "前天看的", "今天看的", "刚才", "刚刚", "之前", "上次", "那个", "那篇", "这篇", "看过", "看的", "打开过", "用过"].contains { text.contains($0) }
     }
     // Looks like an identifier rather than a word: safe to pick out of a sentence.
     static func identifier(_ value: String) -> Bool {

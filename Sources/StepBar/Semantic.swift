@@ -63,49 +63,12 @@ enum Semantic {
         return false
     }
     static func normalize(_ query: String) -> String {
-        query.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        query.precomposedStringWithCompatibilityMapping.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
     // A short, high-recall list: query words and Chinese bigrams against titles, background notes, page text and
     // time windows. (Apple's NLEmbedding was tried and dropped: unrelated titles scored as high as related ones.)
     static func match(query: String, pool: [SearchItem], pages: [String: PageText], boost: [String: Double] = [:], now: Date = Date(), limit: Int = 12) -> [SearchItem] {
-        let phrases = Ranker.tokens(core(query)).filter { $0.count >= 2 && $0.unicodeScalars.allSatisfy(\.isASCII) }
-        let grams = Ranker.grams(core(query))
-        let window = Ranker.window(query, now: now)
-        let lowered = query.lowercased()
-        var seen = Set<String>(), scored: [(SearchItem, Double)] = []
-        for var item in pool where seen.insert(item.id).inserted {
-            let head = (item.title + " " + item.aliases).lowercased(), address = (item.url ?? "").lowercased()
-            let content = item.url.flatMap { pages[SearchItem.urlID($0)]?.text.lowercased() } ?? ""
-            var score = 0.0, matched = false
-            for phrase in phrases {
-                if has(phrase, in: head) { score += 3; matched = true }
-                else if has(phrase.replacingOccurrences(of: " ", with: "-"), in: address) || has(phrase.replacingOccurrences(of: " ", with: ""), in: address) { score += 1.5; matched = true }
-                else if has(phrase, in: content) { score += 1; matched = true }
-            }
-            // Chinese bigrams: one stray hit ("学习") is noise, so at least half of them must appear.
-            var gramHits = 0
-            // A background keyword the query mentions ("阶跃" in "阶跃模型文档" for a StepFun page); counted once, below a title hit.
-            let tagHits = item.keywords.filter { $0.count >= 2 && lowered.contains($0.lowercased()) }.count
-            let tagText = tagHits > 0 ? "" : (item.keywords.joined(separator: " ") + " " + item.purpose).lowercased()
-            for gram in grams {
-                if head.contains(gram) { score += 1.5; gramHits += 1 }
-                else if !tagText.isEmpty && tagText.contains(gram) { score += 1; gramHits += 1 }
-                else if content.contains(gram) { score += 0.5; gramHits += 1 }
-            }
-            if gramHits > 0 && gramHits * 2 >= grams.count { matched = true }
-            if tagHits > 0 { score += 2 * Double(min(tagHits, 2)); matched = true }
-            let inWindow = window.map { w in item.date.map(w.contains) ?? false } ?? false
-            if inWindow { score += 2 }
-            // A bare time phrase ("昨天看的那篇") is a valid request on its own.
-            guard matched || (inWindow && grams.isEmpty && phrases.isEmpty) else { continue }
-            // Search result pages are rarely what someone wants to go back to.
-            if let url = item.url, Inference.searchTemplate(url: url) != nil || url.contains("google.com/search") { score -= 2 }
-            if item.kind == .tab { score += 0.5 }
-            score += min(log2(Double(item.visits) + 1), 3) * 0.3 + (boost[item.id] ?? 0)
-            if let page = item.url.flatMap({ pages[SearchItem.urlID($0)] }) { item.content = String(page.text.prefix(120)) }
-            scored.append((item, score))
-        }
-        return distinct(scored.sorted { $0.1 != $1.1 ? $0.1 > $1.1 : ($0.0.date ?? .distantPast) > ($1.0.date ?? .distantPast) }.map(\.0), limit: limit)
+        LocalIndex(pool: pool).match(query: query, boost: boost, now: now, limit: limit)
     }
     // The query and a background keyword meet: the query names the keyword, or shares a Chinese bigram with it.
     static func tagged(_ item: SearchItem, query: String) -> Bool {
@@ -115,11 +78,60 @@ enum Semantic {
     }
     // Same id or same title (one page visited under several URLs) only takes one model slot.
     static func distinct(_ items: [SearchItem], limit: Int) -> [SearchItem] {
-        var ids = Set<String>(), titles = Set<String>(), result: [SearchItem] = []
-        for item in items where ids.insert(item.id).inserted && titles.insert(item.kind.rawValue + "|" + item.title.lowercased()).inserted {
+        guard limit > 0 else { return [] }
+        var ids = Set<String>(), result: [SearchItem] = []
+        for item in items where ids.insert(Fusion.identity(item)).inserted {
             result.append(item)
             if result.count >= limit { break }
         }
         return result
+    }
+}
+
+// Cached, pre-normalized structured fields. Raw body/title fallback belongs to
+// L1, not L2; without Step 5 notes this index is deliberately empty.
+struct LocalIndex {
+    struct Row { var item: SearchItem; var fields: [(String, Double)]; var terms: Set<String> }
+    var rows: [Row] = []
+    var postings: [String: [Int]] = [:]
+    init(pool: [SearchItem]) {
+        var seen = Set<String>()
+        for item in pool where seen.insert(Fusion.identity(item)).inserted {
+            guard !item.keywords.isEmpty || !item.asks.isEmpty || !item.purpose.isEmpty || !item.entity.isEmpty else { continue }
+            let fields = [(item.entity, 3.0), (item.keywords.joined(separator: " "), 2.5),
+                          (item.asks.joined(separator: " "), 1.5), (item.purpose, 1.0)].map { (Semantic.normalize($0.0), $0.1) }
+            let terms = Set(fields.flatMap { Ranker.grams($0.0) })
+            let index = rows.count
+            rows.append(Row(item: item, fields: fields, terms: terms))
+            for term in terms { postings[term, default: []].append(index) }
+        }
+    }
+    func match(query: String, boost: [String: Double] = [:], now: Date = Date(), limit: Int = 30) -> [SearchItem] {
+        let terms = Ranker.grams(Semantic.core(query)), window = Inference.recalling(query) ? Ranker.window(query, now: now) : nil
+        let normalized = Semantic.normalize(query)
+        var candidates = Set(terms.flatMap { postings[$0] ?? [] })
+        if terms.isEmpty && window != nil { candidates = Set(rows.indices) }
+        func idf(_ term: String) -> Double { log(1 + Double(rows.count + 1) / Double((postings[term]?.count ?? 0) + 1)) }
+        let total = terms.reduce(0.0) { $0 + idf($1) }
+        var found: [SearchItem] = []
+        for index in candidates {
+            let row = rows[index]
+            let inWindow = window.map { row.item.date.map($0.contains) ?? false } ?? false
+            if window != nil && !inWindow { continue }
+            var covered = 0.0, score = 0.0
+            for term in terms {
+                let weight = row.fields.filter { Semantic.has(term, in: $0.0) }.map(\.1).max() ?? 0
+                if weight > 0 { covered += idf(term); score += idf(term) * weight }
+            }
+            let exact = !row.item.entity.isEmpty && Semantic.has(Semantic.normalize(row.item.entity), in: normalized)
+            let coverage = total > 0 ? covered / total : 0
+            guard coverage >= 0.5 || exact || (terms.isEmpty && inWindow) else { continue }
+            var item = row.item
+            let confidence = item.understandingConfidence.isFinite ? min(1, max(0.1, item.understandingConfidence)) : 0.1
+            item.score = score * max(coverage, exact ? 1 : 0) * confidence + (exact ? 3 * confidence : 0)
+                + min(max(boost[item.id] ?? 0, 0), 12) * 0.02 + (inWindow ? 0.2 : 0)
+            found.append(item)
+        }
+        return Semantic.distinct(found.sorted { $0.score != $1.score ? $0.score > $1.score : Fusion.identity($0) < Fusion.identity($1) }, limit: limit)
     }
 }

@@ -1,10 +1,23 @@
-# v0.1.8 发布与升级验收
+# StepBar 发布与升级验收
 
-## 发布
+## 版本状态
 
-执行 `STEPBAR_TEST_UI=1 ./scripts/test.sh` 和 `./scripts/package-release.sh`。发布前检查 ZIP：仅包含 StepBar.app、图标、扩展源码、更新与卸载脚本；不含本机配置、配对码、浏览历史或签名私钥。固定签名证书私钥保留在发布者本机，禁止上传。
+公开最新版仍为 **v0.1.8（build 9）**。下述 v0.1.8 记录为已发布历史；检索优化仅本地提交，尚未 push、打发布包或安装，不得重新运行旧版本打包流程并覆盖已发布资源。
 
-将 `build/release/StepBar-0.1.8-arm64.zip` 和 `update-arm64.json` 上传至 GitHub Release `v0.1.8`。不公开本机草稿和旧备份。只发布 Apple Silicon 包；Intel 需要在对应机器构建并发布 `update-x86_64.json`。不覆盖已有标签与资源。
+## 下一版待发布变更（未发布）
+
+- L1 原始匹配、Step 5 schema=2 与缓存本地结构化索引；保守跨源去重、RRF 最多 5 个候选。
+- 前台不发送 current／clipboard，空输入不调模型；模板证据生成、统一回忆路由与时间过滤、明确 GitHub 仓库路径直达。
+- 联网软等 1.2 秒、晚结果仅缓存、在途共享与 5 分钟缓存；前台请求取消、逐项输出容错、模式校验及失败反馈。
+- 本轮已通过 `STEPBAR_TEST_UI=1 ./scripts/test.sh`、`swift build -c release`、`git diff --check`；没有真实模型／用户历史基准，没有替换本机应用。测试边界见 [验收](ACCEPTANCE.md) 与 [三层检索](RETRIEVAL.md)。
+
+发布须另获授权，使用新版本／build（可考虑 v0.1.9，尚未定版），审核完整差异并排除本机 handoff、独立 `.gitignore` 修改与 Anatomy 取消草稿。升版后重新测试、签名打包、隐私扫描、SHA-256 与解压验签，检查与 v0.1.8 相同 designated requirement，再上传新标签资源。绝不覆盖旧标签／包，不清 quarantine、不放宽钥匙串 ACL。
+
+## 已发布 v0.1.8 记录
+
+v0.1.8 发布时执行测试和 `./scripts/package-release.sh`。任何下一版发布前都须检查 ZIP：仅包含 StepBar.app、图标、扩展源码、更新与卸载脚本；不含本机配置、配对码、浏览历史或签名私钥。固定签名证书私钥保留在发布者本机，禁止上传。
+
+v0.1.8 已上传 `StepBar-0.1.8-arm64.zip` 和 `update-arm64.json`，保留不覆盖。不公开本机草稿和旧备份。当前只发布 Apple Silicon 包；Intel 须在对应机器构建、验收后另行发布，尚无该安装包。
 
 本版修复传统钥匙串后台读取反复弹授权窗口：读取时禁止交互并恢复原策略，无授权返回空，显式保存仍可授权一次。旧条目若不信任当前签名，需用户重新填写并授权，不自动删除或放宽访问权限。真实旧条目重授权后跨版本静默行为仍需现场验收。
 
