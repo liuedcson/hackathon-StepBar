@@ -34,6 +34,10 @@ import SwiftUI
     @Published var sessionUsage = TokenUsage()
     @Published var bridgeReady = false
     @Published var bridgeHeartbeat = Date.distantPast
+    @Published var testingBridge = false
+    @Published var bridgeTestStatus = ""
+    private var bridgeProbe: UUID?
+    private var bridgePort: UInt16 = 17373
     var preparationSchedule = PreparationSchedule()
     var historyLoading = false
     var allHistory: [SearchItem] = []
@@ -115,7 +119,18 @@ import SwiftUI
         refreshModelLabels()
         bridge.onReport = { [weak self] report in Task { @MainActor in self?.receiveBrowser(report) } }
         bridge.onStatus = { [weak self] message in Task { @MainActor in self?.bridgeStatus = message } }
-        bridge.onAck = { [weak self] ack in Task { @MainActor in self?.acknowledgeJump(ack) } }
+        bridge.onPort = { [weak self] port in Task { @MainActor in
+            guard let self else { return }
+            self.bridgePort = port; self.writePairing()
+        } }
+        bridge.onAck = { [weak self] ack in Task { @MainActor in
+            guard let self else { return }
+            if ack.id == self.bridgeProbe {
+                self.bridgeProbe = nil; self.testingBridge = false
+                self.bridgeTestStatus = ack.success ? "连接成功" : "未收到扩展响应，请确认 Chrome 已打开并加载最新扩展"
+                if ack.success { self.bridgeHeartbeat = Date(); self.refreshBridgeHealth() }
+            } else { self.acknowledgeJump(ack) }
+        } }
         bridge.onPage = { [weak self] page in Task { @MainActor in self?.receivePage(page) } }
         bridge.onHeartbeat = { [weak self] in Task { @MainActor in
             guard let self else { return }
@@ -213,7 +228,7 @@ import SwiftUI
             } catch { status = "扩展资源安装失败，请重试。" }
         }
         guard let folder = extensionFolder else { return }
-        let data = try? JSONEncoder().encode(["token": settings.bridgeToken])
+        let data = try? JSONEncoder().encode(["token": settings.bridgeToken, "port": String(bridgePort)])
         try? data?.write(to: folder.appendingPathComponent("pairing.json"), options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: folder.appendingPathComponent("pairing.json").path)
         let exported = downloadExtensionFolder
@@ -253,6 +268,20 @@ import SwiftUI
             NSWorkspace.shared.open([page], withApplicationAt: chrome, configuration: NSWorkspace.OpenConfiguration())
         }
         status = "扩展已准备到下载目录的 StepBar-browser-extension。Chrome → 开发者模式 → 加载已解压的扩展程序，选择该文件夹；安装后请勿删除或移动。"
+        bridgeTestStatus = "在 Chrome 开启开发者模式，加载已解压的扩展程序，选择刚打开的文件夹。完成后点击测试连接。"
+    }
+    func testBrowserConnection() {
+        guard !testingBridge else { return }
+        guard settings.browserBridge, !paused else { bridgeTestStatus = "请先启用 Chrome 扩展连接并恢复 StepBar"; return }
+        testingBridge = true; bridgeTestStatus = "正在测试…"
+        bridgeProbe = bridge.testConnection()
+        let probe = bridgeProbe
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            guard self.bridgeProbe == probe else { return }
+            self.bridgeProbe = nil; self.testingBridge = false
+            self.bridgeTestStatus = "未收到扩展响应，请确认 Chrome 已打开并加载最新扩展"
+        }
     }
     private func prepareUninstaller() {
         guard Bundle.main.bundleURL.pathExtension == "app",

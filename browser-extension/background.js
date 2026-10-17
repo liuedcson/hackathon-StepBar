@@ -1,4 +1,4 @@
-const endpoint = 'http://127.0.0.1:17373';
+let endpoint = 'http://127.0.0.1:17373';
 let busy = false;
 // Chrome only: StepBar reads Chrome's history and talks to this one browser.
 const bundle = 'com.google.Chrome';
@@ -9,13 +9,16 @@ async function autoPair() {
   try {
     const file = await (await fetch(chrome.runtime.getURL('pairing.json'), { cache: 'no-store' })).json();
     if (file.token && file.token !== stored.pairedFile) { update.token = file.token; update.pairedFile = file.token; }
-  } catch (_) { /* no pairing file: use the token entered in options */ }
+    const port = Number(file.port || 17373);
+    if (Number.isInteger(port) && port >= 17373 && port <= 17393) endpoint = `http://127.0.0.1:${port}`;
+  } catch (_) { /* Load the extension folder exported by StepBar to pair automatically. */ }
   if (Object.keys(update).length) await chrome.storage.local.set(update);
 }
 async function sync() {
   if (busy) return;
   busy = true;
   try {
+    await autoPair(); // Follow the app's actual bound port without manual configuration or reload.
     const { token } = await chrome.storage.local.get(['token']);
     if (!token) return;
     const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Browser-Bundle': bundle };
@@ -27,7 +30,9 @@ async function sync() {
     const command = await response.json();
     if (command.id && command.bundle === bundle) {
       let success = false;
-      if (Array.isArray(command.close)) {
+      if (command.probe === true) {
+        success = true; // Authenticated round trip; do not focus or close any tab.
+      } else if (Array.isArray(command.close)) {
         try { await chrome.tabs.remove(command.close); success = true; } catch (error) { console.warn('StepBar tab close failed', error.message); }
       } else try {
         const tab = await chrome.tabs.get(command.tabID);

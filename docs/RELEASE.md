@@ -1,12 +1,14 @@
-# v0.1.6 发布与升级验收
+# v0.1.7 发布与升级验收
 
 ## 发布
 
 执行 `STEPBAR_TEST_UI=1 ./scripts/test.sh` 和 `./scripts/package-release.sh`。发布前检查 ZIP：仅包含 StepBar.app、图标、扩展源码、更新与卸载脚本；不含本机配置、配对码、浏览历史或签名私钥。固定签名证书私钥保留在发布者本机，禁止上传。
 
-将 `build/release/StepBar-0.1.6-arm64.zip` 和 `update-arm64.json` 上传至 GitHub Release `v0.1.6`。不公开本机草稿和旧备份。只发布 Apple Silicon 包；Intel 需要在对应机器构建并发布 `update-x86_64.json`。不覆盖已有标签与资源。
+将 `build/release/StepBar-0.1.7-arm64.zip` 和 `update-arm64.json` 上传至 GitHub Release `v0.1.7`。不公开本机草稿和旧备份。只发布 Apple Silicon 包；Intel 需要在对应机器构建并发布 `update-x86_64.json`。不覆盖已有标签与资源。
 
-本版修复隔离运行更新：选择真实 StepBar.app，校验身份、签名与可写目录，安装工具等待当前 PID 退出，失败明确提示。不清除隔离属性、不关闭 Gatekeeper。产品文档明确轻量级办公 Toolbar 定位，当前平台仍是 macOS／Chrome。旧客户端因隔离运行无法更新时，需一次手动安装本版。
+本版精简设置：学习进度与历史准备移入「记忆」，去掉配对码、本地路径及冗长更新说明。扩展自动配对，增加无副作用的真实连接测试。默认端口占用时自动尝试备用端口并同步给扩展；备用监听与鉴权回归通过，真实 Chrome 自动跟随端口仍需现场验收。应用更新后再次点击「安装 Chrome 扩展」刷新导出文件，并在 Chrome 重新加载扩展。
+
+保留 v0.1.6 的隔离运行更新目标选择与失败提示，不清除隔离属性、不关闭 Gatekeeper。v0.1.5 及以前若因隔离运行无法更新，需一次手动安装最新版。
 
 保留 v0.1.5 的 Token usage、Chrome 心跳 Ready、历史本地 ID 模板与定时定量 AI 准备；设置仅「设置／记忆」两页。
 

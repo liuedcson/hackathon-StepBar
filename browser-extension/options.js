@@ -1,4 +1,3 @@
-const token = document.getElementById('token');
 const statusLine = document.getElementById('status');
 async function render() {
   const { status, lastSync, tabCount } = await chrome.storage.local.get(['status', 'lastSync', 'tabCount']);
@@ -11,14 +10,5 @@ async function render() {
     statusLine.textContent = age === null ? '正在连接…' : `⚠️ ${age} 秒未同步，请确认 StepBar 正在运行`;
   }
 }
-async function load() {
-  const config = await chrome.storage.local.get(['token']);
-  token.value = config.token || '';
-  render();
-}
-document.getElementById('save').onclick = async () => {
-  await chrome.storage.local.set({ token: token.value.trim(), lastSync: 0 });
-  statusLine.textContent = '已保存，正在连接…';
-};
 setInterval(render, 1000);
-load();
+render();

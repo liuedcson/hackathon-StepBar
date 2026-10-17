@@ -59,8 +59,31 @@ import Foundation
         let nextCommand = try JSONDecoder().decode(BrowserCommand.self, from: next)
         precondition(nextCommand.id == second)
         _ = try await send("/ack", method: "POST", body: JSONEncoder().encode(BrowserAck(id: second, success: true)))
+        let probe = bridge.testConnection()
+        let (_, unauthorizedProbe) = try await send("/command", authenticated: false)
+        precondition(unauthorizedProbe == 401)
+        let (probeData, _) = try await send("/command")
+        let probeCommand = try JSONDecoder().decode(BrowserCommand.self, from: probeData)
+        precondition(probeCommand.id == probe && probeCommand.probe == true && probeCommand.close == nil)
+        bridge.onAck = { ack in precondition(ack.id == probe && ack.success) }
+        _ = try await send("/ack", method: "POST", body: JSONEncoder().encode(BrowserAck(id: probe, success: true)))
+        let (afterProbe, _) = try await send("/command")
+        precondition(String(data: afterProbe, encoding: .utf8) == "{}")
         print("PASS: loopback bridge auth, context, command routing and acknowledgement")
         let receivedHeartbeats = heartbeatLock.withLock { heartbeats }
         precondition(receivedHeartbeats > 0, "Authenticated Chrome polling must signal readiness")
+        let fallback = BrowserBridge(port: 18776, fallbackCount: 2)
+        defer { fallback.stop() }
+        let chosenPort: UInt16 = await withCheckedContinuation { continuation in
+            fallback.onPort = { continuation.resume(returning: $0) }
+            fallback.start(token: token)
+        }
+        precondition(chosenPort > 18776 && chosenPort <= 18778, "Occupied port must not block the bridge")
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(chosenPort)/command")!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(BrowserTab.chrome, forHTTPHeaderField: "X-Browser-Bundle")
+        let (_, fallbackResponse) = try await session.data(for: request)
+        precondition((fallbackResponse as! HTTPURLResponse).statusCode == 200)
+        print("PASS: occupied default port falls back to an authenticated loopback listener")
     }
 }

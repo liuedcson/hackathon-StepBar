@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "StepBar for Chrome · 阶跃星辰",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shares open tabs and page text with the local StepBar app so it can understand your pages; switches or closes tabs on request.",
   "permissions": [
     "tabs",
@@ -10,7 +10,7 @@
     "scripting"
   ],
   "host_permissions": [
-    "http://127.0.0.1:17373/*",
+    "http://127.0.0.1/*",
     "<all_urls>"
   ],
   "background": {
@@ -18,7 +18,7 @@
   },
   "options_page": "options.html",
   "action": {
-    "default_title": "StepBar 配对设置",
+    "default_title": "StepBar 连接状态",
     "default_icon": {
       "16": "icons/16.png",
       "32": "icons/32.png"

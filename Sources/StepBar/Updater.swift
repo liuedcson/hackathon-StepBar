@@ -30,7 +30,7 @@ struct ReleaseManifest: Codable {
 
 @MainActor final class Updater: ObservableObject {
     static let repository = "liuedcson/hackathon-StepBar"
-    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.6" }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.7" }
     static var architecture: String {
         #if arch(arm64)
         return "arm64"
@@ -223,9 +223,8 @@ struct UpdateSettingsView: View {
     @ObservedObject var updater: Updater
     var body: some View {
         Section("版本与更新") {
-            Text("StepBar v\(Updater.version) · \(Updater.architecture)")
-            Text("从公开 GitHub Releases 获取更新，无需 Token。") .font(.caption)
-            Toggle("启动时及每 6 小时自动检查更新", isOn: Binding(get: { updater.automatic }, set: { updater.save(automatic: $0) }))
+            Text("StepBar v\(Updater.version)")
+            Toggle("自动检查更新", isOn: Binding(get: { updater.automatic }, set: { updater.save(automatic: $0) }))
             Button("检查更新") { Task { await updater.check() } }.disabled(updater.busy)
             if let version = updater.available {
                 Button("下载并安装 v\(version)") {
@@ -233,7 +232,6 @@ struct UpdateSettingsView: View {
                 }.disabled(updater.busy)
             }
             Text(updater.status).font(.caption).textSelection(.enabled)
-            Text("下载后验证 SHA-256、版本与相同签名身份，确认安装时退出并重启。未公证应用首次安装可能需手动放行；更新后 Chrome 扩展需要重新加载。") .font(.caption)
         }
     }
 }

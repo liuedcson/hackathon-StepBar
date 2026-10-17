@@ -22,13 +22,15 @@ struct BrowserCommand: Codable {
     var date = Date()
     // Set for close commands: tabs to remove instead of focusing tabID.
     var close: [Int]?
+    var probe: Bool?
 }
 struct BrowserAck: Codable { var id: UUID; var success: Bool }
 
 // Loopback-only HTTP bridge; pairing token required on every endpoint.
 final class BrowserBridge {
     private let port: UInt16
-    init(port: UInt16 = 17373) { self.port = port }
+    private let fallbackCount: UInt16
+    init(port: UInt16 = 17373, fallbackCount: UInt16 = 20) { self.port = port; self.fallbackCount = fallbackCount }
     private let queue = DispatchQueue(label: "StepBar.browser-bridge")
     private var listener: NWListener?
     private var token = ""
@@ -38,21 +40,31 @@ final class BrowserBridge {
     var onAck: ((BrowserAck) -> Void)?
     var onPage: ((PageText) -> Void)?
     var onHeartbeat: (() -> Void)?
+    var onPort: ((UInt16) -> Void)?
     func start(token: String) {
         queue.async {
             self.listener?.cancel(); self.listener = nil; self.token = token; self.commands = []
+            self.listen(port: self.port)
+        }
+    }
+    private func listen(port: UInt16) {
             do {
                 let parameters = NWParameters.tcp
-                parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: self.port)!)
+                parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
                 let listener = try NWListener(using: parameters)
                 listener.newConnectionHandler = { [weak self] connection in self?.accept(connection) }
-                listener.stateUpdateHandler = { [weak self] state in
-                    if case .ready = state { self?.onStatus?("浏览器桥接就绪 · 127.0.0.1:\(self?.port ?? 17373)") }
-                    if case .failed = state { self?.onStatus?("浏览器桥接失败；端口可能被占用") }
+                listener.stateUpdateHandler = { [weak self, weak listener] state in
+                    guard let self, let listener, self.listener === listener else { return }
+                    if case .ready = state { self.onPort?(port); self.onStatus?("浏览器桥接就绪") }
+                    if case .failed(let error) = state {
+                        listener.cancel(); self.listener = nil
+                        if case .posix(.EADDRINUSE) = error, UInt32(port) < min(65535, UInt32(self.port) + UInt32(self.fallbackCount)) {
+                            self.listen(port: port + 1)
+                        } else { self.onStatus?("Chrome 连接启动失败，请重试") }
+                    }
                 }
                 self.listener = listener; listener.start(queue: self.queue)
             } catch { self.onStatus?("无法启动浏览器桥接") }
-        }
     }
     func stop() { queue.async { self.listener?.cancel(); self.listener = nil; self.commands = [] } }
     @discardableResult func jump(_ ref: BrowserTabRef) -> UUID {
@@ -60,6 +72,9 @@ final class BrowserBridge {
     }
     @discardableResult func close(_ tabIDs: [Int], bundle: String) -> UUID {
         send(BrowserCommand(tabID: tabIDs.first ?? 0, windowID: 0, bundle: bundle, close: tabIDs))
+    }
+    @discardableResult func testConnection() -> UUID {
+        send(BrowserCommand(tabID: 0, windowID: 0, bundle: BrowserTab.chrome, probe: true))
     }
     private func send(_ command: BrowserCommand) -> UUID {
         queue.async {

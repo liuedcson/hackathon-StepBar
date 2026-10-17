@@ -170,18 +170,16 @@ struct SettingsView: View {
                         TextField("前台检索 Model ID", text: $draft.quickModelID)
                         SecureField("Step Plan API Key", text: credential($key, edited: $keyEdited))
                     }
-                    Text("首次配置完成立即分批准备；之后新增满 10 条或每 15 分钟增量分析，不要求空闲或接电。每次最多理解 10 个页面，输出上限 4096 tokens；后台请求会消耗 Token 和电量。官方默认：后台 step-5-preview（high），前台 step-3.7-flash（low）。")
-                        .font(.caption)
-                    Toggle("后台自动准备历史与增量理解新页面", isOn: $draft.background)
-                    Toggle("唤起搜索时先联网搜索一次输入的词，作为第三层的最新信息", isOn: $draft.webSearch)
-                    Text("后台向配置的后台模型发送页面信息；前台向配置的前台模型发送输入、剪贴板、候选及联网结果。搜索只发送输入的词，不含剪贴板。回忆、链接、订单号/ID 不联网。个人信息先打码，带敏感参数的网址不发送。各服务密钥独立，仅保存在本机配置或钥匙串。")
+                    Toggle("自动学习网页用途", isOn: $draft.background)
+                    Toggle("联网搜索", isOn: $draft.webSearch)
+                    Text("启用 AI 后，相关页面与查询信息会发送到配置的模型服务，产生 Token 消耗。搜索不发送历史或剪贴板。")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button("保存设置") { store.saveSettings(draft, key: keyEdited ? key : "", clearKey: keyEdited && key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, foregroundKey: foregroundKeyEdited ? foregroundKey : "", clearForegroundKey: foregroundKeyEdited && foregroundKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, searchKey: searchKeyEdited ? searchKey : "", clearSearchKey: searchKeyEdited && searchKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, voiceKey: voiceKeyEdited ? voiceKey : "", clearVoiceKey: voiceKeyEdited && voiceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-                        Button(store.testingAI ? "测试中…" : "测试已保存的 AI 配置") { store.testAI() }.disabled(store.testingAI)
+                        Button(store.testingAI ? "测试中…" : "测试模型连接") { store.testAI() }.disabled(store.testingAI)
                     }
                     Text(store.aiStatus).font(.caption).textSelection(.enabled)
-                    Text("当前：\(store.aiDescription)").font(.caption)
+                    Text("测试使用已保存的配置。").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("快捷键和隐私") {
                     Picker("全局唤出", selection: $draft.hotkey) {
@@ -191,41 +189,27 @@ struct SettingsView: View {
                     }
                     TextField("排除的网站域名（逗号或空格分隔，含子域名）", text: $draft.excludedSites)
                     Stepper("页面正文和搜索记录保留 \(draft.retentionDays) 天", value: $draft.retentionDays, in: 1...90)
-                    Text("排除的网站不会被索引、理解或发送。学到的查询入口、网址模式和「输入 → 选择」记录是越用越准的来源，180 天未使用才会清理，可在诊断窗口逐条删除。")
+                    Text("排除的网站不会被索引或发送。学习记录可在「记忆」中管理。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Chrome 扩展") {
-                    Label(store.bridgeReady ? "Ready · 扩展已连接" : "Not Ready · 扩展未就绪", systemImage: store.bridgeReady ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    Label(store.bridgeReady ? "已连接" : "未连接", systemImage: store.bridgeReady ? "checkmark.circle.fill" : "exclamationmark.circle")
                         .foregroundStyle(store.bridgeReady ? Color.green : Color.orange)
-                    Toggle("启用本机 Chrome 桥接", isOn: $draft.browserBridge)
-                    Text(store.bridgeStatus).font(.caption)
-                    if store.bridgeHeartbeat != .distantPast { Text("最近心跳：\(store.bridgeHeartbeat.formatted(date: .omitted, time: .standard))").font(.caption) }
-                    Text("配对码：\(draft.bridgeToken)").font(.caption.monospaced()).textSelection(.enabled)
-                    Button("重新生成配对码") { draft.bridgeToken = UUID().uuidString }
-                    Button("安装 Chrome 扩展（打开扩展页与文件夹）") { store.installExtension() }
-                    Text("扩展上报打开的标签页、读取停留页面的正文摘录，并执行切换/关闭标签页。桥接只监听本机 127.0.0.1:17373，每个请求都要配对码。")
+                    Toggle("启用 Chrome 扩展连接", isOn: $draft.browserBridge)
+                    HStack {
+                        Button("安装 Chrome 扩展") { store.installExtension() }
+                        Button(store.testingBridge ? "测试中…" : "测试连接") { store.testBrowserConnection() }.disabled(store.testingBridge)
+                    }
+                    if !store.bridgeTestStatus.isEmpty { Text(store.bridgeTestStatus).font(.caption) }
+                    Text("自动连接，无需填写配对信息。扩展用于同步标签页、读取停留页面的摘录和切换页面。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Token 用量") {
                     Text("本次运行：\(store.sessionUsage.total.formatted()) tokens · \(store.sessionUsage.requests) 次模型响应")
                     Text("今日：\(Calendar.current.isDateInToday(store.usage.day) ? store.usage.today.total : 0) · 累计：\(store.usage.lifetime.total.formatted()) tokens")
                     Text("累计输入 \(store.usage.lifetime.input.formatted()) · 输出 \(store.usage.lifetime.output.formatted()) · 未返回用量 \(store.usage.lifetime.unreported) 次")
-                    Text("按模型服务返回的 usage 统计，包含前台、后台与连接测试；缺失用量不当作零消耗。搜索和语音费用不在此统计内，Token 不能直接换算金额。后台按批次和单次输出上限控制，不再按小时额度阻止历史准备。")
+                    Text("按模型返回的用量统计，不含搜索与语音费用。")
                         .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("首次使用与历史准备") {
-                    Text(store.historyStatus)
-                    Text(store.preparationProgress).font(.caption)
-                    Text(store.backgroundStatus).font(.caption)
-                    Button("重新准备 Chrome 历史") { store.prepareHistory() }
-                    Text("本地扫描近 90 天所有可读取且未排除的 Chrome 历史，先生成有至少两个不同实例支持的 ID 查询路径，不调用模型。AI 立即分批理解，之后每 15 分钟或新增满 10 条处理；移除不在历史范围中的页面理解、网站模式，正文按保留天数清理。不回访历史网页，不编造不存在的入口。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("运行信息") {
-                    Button("查看已学习的记忆") { store.diagnosticTab = "memory" }
-                    Text("本地数据：\(store.path.deletingLastPathComponent().path)").font(.caption).textSelection(.enabled)
-                    if let path = store.settings.localConfigPath { Text("本地配置：\(path) · 编辑后重启生效").font(.caption).textSelection(.enabled) }
-                    Text("StepBar v\(Updater.version) · AI 不可用时保留本地两层结果").font(.caption).foregroundStyle(.secondary)
                 }
                 UpdateSettingsView(updater: store.updater)
             }.formStyle(.grouped).scrollContentBackground(.hidden).padding()
@@ -249,16 +233,24 @@ struct DiagnosticsView: View {
             HStack {
                 BrandMark(size: 22); Text("StepBar").font(.title2.bold()); Spacer()
                 Button(store.paused ? "恢复" : "暂停") { store.togglePause() }
-                Button("清空记忆", role: .destructive) { confirmClear = true }
+                if store.diagnosticTab == "memory" { Button("清空记忆", role: .destructive) { confirmClear = true } }
             }.padding([.horizontal, .top])
-            HStack {
-                Text(store.aiDescription)
-                Spacer(); Text("页面理解 \(store.memory.notes.count) · 网址模式 \(store.memory.patterns.count) · 查询入口 \(store.memory.recipes.count) · 学到的选择 \(store.memory.queryChoices.count)")
-            }.font(.caption).foregroundStyle(.secondary).padding(.horizontal)
             TabView(selection: $store.diagnosticTab) {
                 SettingsView(store: store).tabItem { Text("设置") }.tag("settings")
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                     GroupBox("历史与学习") {
+                         VStack(alignment: .leading, spacing: 8) {
+                             Text(store.historyStatus)
+                             Text(store.preparationProgress).font(.caption)
+                             Text(store.backgroundStatus).font(.caption).textSelection(.enabled)
+                             Button("重新准备 Chrome 历史") { store.prepareHistory() }
+                             DisclosureGroup("学习说明") {
+                                 Text("读取近 90 天未排除的 Chrome 历史，不回访历史网页。本地先整理查询入口，AI 分批理解页面用途；之后每 15 分钟或新增满 10 条增量分析，产生 Token 和电量消耗。学习记录可在下方管理。")
+                                     .font(.caption).foregroundStyle(.secondary)
+                             }
+                         }.frame(maxWidth: .infinity, alignment: .leading)
+                     }
                     TextField("筛选标题、用途或关键词", text: $search).padding(10)
                     DisclosureGroup("记住的网页（\(notes.count)）") {
                     Text("网页用途和关键词，让你换一种说法也能找回。").font(.caption).foregroundStyle(.secondary)
@@ -310,10 +302,6 @@ struct DiagnosticsView: View {
                     }.padding()
                 }.tabItem { Text("记忆") }.tag("memory")
             }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(store.status)
-                Text(store.backgroundStatus).foregroundStyle(.secondary)
-            }.font(.caption).padding([.horizontal, .bottom])
         }.frame(minWidth: 800, minHeight: 600)
             .onAppear { if !["settings", "memory"].contains(store.diagnosticTab) { store.diagnosticTab = "settings" } }
             .alert("清空全部本地记忆？", isPresented: $confirmClear) {
