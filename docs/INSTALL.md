@@ -1,11 +1,10 @@
-# StepBar v0.1.1 安装与使用指南
+# StepBar 安装与使用指南
 
 ## 下载与系统要求
 
 需要 macOS 13+、Apple Silicon（M 系列芯片）及 Google Chrome。目前只发布 arm64 包，Intel 用户需自行构建，尚无对应安装包。
 
-- [直接下载 ZIP](https://github.com/liuedcson/hackathon-StepBar/releases/download/v0.1.1/StepBar-0.1.1-arm64.zip)
-- [版本说明与资源列表](https://github.com/liuedcson/hackathon-StepBar/releases/tag/v0.1.1)
+- [下载最新版 ZIP 与查看版本说明](https://github.com/liuedcson/hackathon-StepBar/releases/latest)
 - [扩展源码](../browser-extension/)
 
 以上 GitHub 资源公开，无需登录或 Token。解压后把 StepBar.app 移入 `/Applications` 或 `~/Applications`，双击启动；应用常驻屏幕顶部菜单栏，不显示 Dock 主窗口。
@@ -29,7 +28,7 @@
 
 - 官方 Step Plan：地址固定，默认后台 step-5-preview、前台 step-3.7-flash，共用你的 Step Plan Key。
 - 自定义：后台、前台分别填 Base URL、Model ID 和 Key。搜索与语音单独配置；默认关闭，不借用 Step Plan。Bing 网页入口仅供点击，不能给模型提供搜索结果。
-- API Key 以密码框载入已保存值，清空后保存即删除。测试分别请求后台、前台，`max_tokens=1`，只验证连通性，不验证业务生成、搜索或语音。安装包不包含密钥，也不会自动加载源码旁的 config.local.json。不配置 AI 仍可先测试本地检索。
+- API Key 默认仅在已有授权时静默载入；无授权留空，不弹钥匙串密码窗口。未编辑密码框时保存不会删除已有 Key；主动编辑并清空后保存才删除。测试分别请求后台、前台，`max_tokens=1`，只验证连通性，不验证业务生成、搜索或语音。安装包不包含密钥，也不会自动加载源码旁的 config.local.json。不配置 AI 仍可先测试本地检索。
 
 ## 安装 Chrome 扩展
 
@@ -68,12 +67,12 @@ v0.1.1 点击安装时准备 **`~/Downloads/StepBar-browser-extension`**，弹�
 3. AI 配置测试通过后，输入公开项目查询，观察本机候选与后续 Step 推荐；网络故障时本机结果应仍可用。
 4. 浏览公开文档后，在接电且空闲的情况下等待后台理解；查看「Step 的理解与记忆」里的页面用途与模式。唤起时后台让出，不保证每次等待固定时间产生结果。
 5. 重复选择同一输入对应的页面，观察已学习选择是否优先出现。不是每次都需要调用模型。
-6. 按需配置语音，按住 ⌥ 后说话，松开进入文本搜索。完整现场麦克风与按键验收仍需实际测试。
+6. 按需配置语音，先唤起 StepBar，再在面板内长按 ⌥M 说话，松开进入文本搜索。不默认采集、不后台录音；完整现场麦克风与按键验收仍需实际测试。
 
 按 ↑ ↓ 选择，↩ 打开，⌘1–9 直达，Tab 再生成，⌘⌫ 关闭所选标签页，Esc 先清空再关闭。直接唤起不输入时，会结合剪贴板与最近页面给建议。
 
 ## 更新与版本边界
 
-设置 →「版本与更新」，默认启动时及每 6 小时自动检查公开 Releases，无需 Token，可关闭。下载与安装需用户确认，校验 SHA-256、版本、Bundle ID 和相同签名身份；网络故障或匿名请求限流时手动下载。旧版 v0.1.0 的更新界面仍需要 Token，建议先手动安装 v0.1.1。更新后重载 Chrome 扩展。
+设置 →「版本与更新」，默认启动时及每 6 小时自动检查公开 Releases，无需 Token，可关闭。下载与安装需用户确认，校验 SHA-256、版本、Bundle ID 和相同签名身份；网络故障或匿名请求限流时手动下载。v0.1.3 及以前若点击安装没有确认窗口，请先手动安装 v0.1.4。更新后重载 Chrome 扩展。应用须先移入应用目录再打开；macOS 隔离运行的临时映射目录不支持自动替换。
 
 v0.1.1 纳入中文语音无空格站内搜索修复。网址可能失效，部分网站需要登录；真实麦克风按键录音与用户现场跨版本升级仍需验收，未来跨应用 MCP 能力尚未实现。

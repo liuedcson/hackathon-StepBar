@@ -49,7 +49,7 @@ struct LauncherView: View {
                     }
                     Hairline()
                     HStack {
-                        Text("↩ 打开  ⌘1–9 直达  \(store.settings.voiceAvailable ? "按住⌥ 说话  " : "")Tab 让 Step 生成  ⌘⌫ 关标签页")
+                        Text("↩ 打开  ⌘1–9 直达  \(store.settings.voiceAvailable ? "长按⌥M 说话  " : "")Tab 让 Step 生成  ⌘⌫ 关标签页")
                         Spacer()
                         Text("阶跃星辰 \(store.launcherModel) · \(store.settings.hotkeyLabel)")
                     }.font(.caption2).foregroundStyle(.tertiary).padding(.horizontal, 14).padding(.vertical, 7)

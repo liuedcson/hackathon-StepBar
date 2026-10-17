@@ -15,7 +15,7 @@ if [[ -d "$app" ]]; then
   [[ "$identity" == "local.stepbar.app" ]] || { echo "应用身份不匹配，未执行卸载。"; exit 1; }
 fi
 printf '卸载 StepBar 并删除本机记忆、设置与密钥？输入 YES 确认：'
-read -r answer
+read -r answer || { echo "未收到确认，已取消。"; exit 1; }
 [[ "$answer" == "YES" ]] || { echo "已取消。"; exit 0; }
 while read -r pid executable; do
   if [[ "$executable" == "$app/Contents/MacOS/StepBar" ]]; then

@@ -28,6 +28,9 @@ extension InferenceTests {
         XCTAssertEqual(Privacy.url("https://work.example/orders/123#section"), "https://work.example/orders/123")
     }
     func testOpenAICompatibleTransport() async throws {
+        XCTAssertEqual(ReleaseManifest.signingRequirementArgument("Executable=/synthetic/StepBar\ndesignated => identifier \"local.stepbar.app\" and certificate leaf = H\"123\"\n"), "=identifier \"local.stepbar.app\" and certificate leaf = H\"123\"")
+        XCTAssertNil(ReleaseManifest.signingRequirementArgument("designated => cdhash H\"123\""))
+        try await Self.checkCancelledMicrophoneStart()
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockProtocol.self]
         let client = AIClient(session: URLSession(configuration: config))
@@ -96,6 +99,17 @@ extension InferenceTests {
         await updater.save(automatic: false)
         precondition(!defaults.bool(forKey: "StepBarAutomaticUpdates"))
         MockProtocol.handler = nil
+    }
+    @MainActor static func checkCancelledMicrophoneStart() async throws {
+        var permission: CheckedContinuation<Bool, Never>?
+        let voice = VoiceInput(permission: { await withCheckedContinuation { permission = $0 } })
+        let start = Task { try await voice.start() }
+        while permission == nil { await Task.yield() }
+        precondition(voice.stop().isEmpty)
+        permission?.resume(returning: true)
+        do { try await start.value; preconditionFailure("Cancelled permission wait started microphone") }
+        catch is CancellationError { }
+        precondition(!voice.recording)
     }
     func testStepPlanTransport() async throws {
         let sessionConfig = URLSessionConfiguration.ephemeral

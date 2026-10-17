@@ -1,14 +1,16 @@
-# v0.1.1 发布与重装验收
+# v0.1.4 发布与重装验收
 
 ## 发布
 
-执行 `./scripts/test.sh` 和 `./scripts/package-release.sh`。发布前检查 ZIP：仅包含 StepBar.app、图标、扩展源码与更新安装脚本；不含本机配置、配对码、浏览历史或签名私钥。固定签名证书私钥保留在发布者本机，禁止上传。
+执行 `STEPBAR_TEST_UI=1 ./scripts/test.sh` 和 `./scripts/package-release.sh`。发布前检查 ZIP：仅包含 StepBar.app、图标、扩展源码、更新与卸载脚本；不含本机配置、配对码、浏览历史或签名私钥。固定签名证书私钥保留在发布者本机，禁止上传。
 
-将 `build/release/StepBar-0.1.1-arm64.zip` 和 `update-arm64.json` 上传至 GitHub Release `v0.1.1`。仓库公开前检查全部可达历史、已发布资源及媒体，不公开本机草稿和不可达旧备份。只发布 Apple Silicon 包；Intel 需要在对应机器构建并发布 `update-x86_64.json`。不覆盖 v0.1.0 标签与资源。
+将 `build/release/StepBar-0.1.4-arm64.zip` 和 `update-arm64.json` 上传至 GitHub Release `v0.1.4`。不公开本机草稿和旧备份。只发布 Apple Silicon 包；Intel 需要在对应机器构建并发布 `update-x86_64.json`。不覆盖已有标签与资源。
 
-本版简化密码框与菜单栏，连接测试使用 max_tokens=1，默认匿名检查公开 Releases，扩展从设置导出到下载目录，纳入中文语音站内搜索修复。扩展 manifest 版本仅在扩展协议或内容发生版本变化时单独维护。
+本版修复原生更新确认窗口、后台校验、安装工具就绪握手、失败恢复与本机日志；语音改为唤起后长按 ⌥M，修复授权取消与过期转写；暂停时阻止延迟 AI 和学习，桥接命令按顺序处理。保留 v0.1.3 的非交互钥匙串读取与未编辑 Key 保护。扩展 manifest 版本仅在扩展协议或内容发生版本变化时单独维护。
 
 ## 干净重装
+
+安装包用户可执行 `/bin/zsh "$HOME/Library/Application Support/StepBar/uninstall.sh"`，输入 YES 后删除应用、记忆、设置、专用钥匙串账户及受管理的扩展目录。保留源码配置和 Chrome 历史；Chrome 扩展列表需手动移除。卸载前请备份需要保留的记忆。
 
 `python3 scripts/reset-local.py` 仅预览；`--confirm` 清理明确列出的 StepBar 应用、运行数据、专用钥匙串账户、配对与构建产物。保留源码、被忽略的 `config.local.json` 和发布签名证书。不会修改 Chrome 用户目录，旧的已加载扩展应在 `chrome://extensions` 手动移除，再加载新扩展。麦克风权限会尝试重置，必要时在系统设置核对。
 
@@ -21,7 +23,7 @@
 - 联网搜索过滤个人信息、ID、回忆和链接；自定义 API/音频转写模拟协议测试通过。
 - 后台只在空闲且接电源时研究；唤起让出任务。
 - 默认自动检查更新，无需 GitHub Token，匿名请求及默认值通过模拟测试；公开后检查真实 Release 与资源下载。
-- 后续版本升级安装需真实新版本做端到端验收：下载、签名验证、替换、回滚、重启和数据保留。本版无真实更高版本，不能宣称此链路已全部实测。
+- 原生确认窗口已用临时 AppKit 窗口验证；安装脚本用隔离假应用覆盖替换、签名失败与启动失败回滚、清理及日志。真实运行应用的完整跨版本更新与数据保留仍需现场验收，不能由隔离测试替代。
 
 ## 已知限制
 

@@ -7,16 +7,30 @@ import Foundation
     private var converter: AVAudioConverter?
     private let buffer = PCMBuffer()
     private(set) var recording = false
+    private var generation = 0
+    private var starting = false
+    private var tapped = false
+    private let permission: @MainActor () async throws -> Bool
+    init(permission: (@MainActor () async throws -> Bool)? = nil) {
+        self.permission = permission ?? {
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized: return true
+            case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
+            default: return false
+            }
+        }
+    }
     static let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
 
     func start() async throws {
-        guard !recording else { return }
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized: break
-        case .notDetermined:
-            guard await AVCaptureDevice.requestAccess(for: .audio) else { throw AIError(message: "没有麦克风权限") }
-        default: throw AIError(message: "没有麦克风权限：系统设置 → 隐私与安全性 → 麦克风 → 打开 StepBar")
-        }
+        guard !recording, !starting else { return }
+        generation += 1
+        let epoch = generation
+        starting = true
+        defer { if epoch == generation { starting = false } }
+        let allowed = try await permission()
+        guard epoch == generation, !Task.isCancelled else { throw CancellationError() }
+        guard allowed else { throw AIError(message: "没有麦克风权限：系统设置 → 隐私与安全性 → 麦克风 → 打开 StepBar") }
         buffer.reset()
         let input = engine.inputNode, source = input.outputFormat(forBus: 0)
         guard source.sampleRate > 0, let converter = AVAudioConverter(from: source, to: Self.format) else { throw AIError(message: "找不到可用的麦克风") }
@@ -32,13 +46,20 @@ import Foundation
             }
             if error == nil, let data = out.int16ChannelData { sink.append(Data(bytes: data[0], count: Int(out.frameLength) * 2)) }
         }
+        tapped = true
         engine.prepare()
-        try engine.start()
+        do { try engine.start() }
+        catch {
+            input.removeTap(onBus: 0); tapped = false; engine.stop(); self.converter = nil
+            throw error
+        }
         recording = true
     }
     func stop() -> Data {
+        generation += 1; starting = false
+        if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
         guard recording else { return Data() }
-        engine.inputNode.removeTap(onBus: 0); engine.stop(); recording = false
+        engine.stop(); recording = false; converter = nil
         return buffer.take()
     }
 

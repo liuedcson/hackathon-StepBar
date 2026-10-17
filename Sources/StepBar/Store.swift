@@ -154,6 +154,7 @@ import SwiftUI
             searchGeneration += 1; webCache = [:]; resetAI()
             settings = updated
             browserTabs = []; browserUpdated = .distantPast
+            pendingJumps = [:]
             if settings.browserBridge { bridge.start(token: settings.bridgeToken) } else { bridge.stop(); bridgeStatus = "浏览器桥接已关闭" }
             writePairing()
             clipText = nil; copied = nil
@@ -242,6 +243,9 @@ import SwiftUI
     }
     func togglePause() {
         paused.toggle(); stopJobs()
+        searchGeneration += 1; resetAI()
+        pendingJumps = [:]
+        if listening { listening = false; _ = voice.stop() }
         clipText = nil; copied = nil
         pasteCount = NSPasteboard.general.changeCount
         if paused { results = [] }
@@ -387,6 +391,7 @@ import SwiftUI
     // MARK: Opening
     func acknowledgeJump(_ ack: BrowserAck) {
         guard let item = pendingJumps.removeValue(forKey: ack.id) else { return }
+        guard !paused else { return }
         if ack.success { status = "已切换到标签页：\(item.title)"; return }
         // The tab was closed or moved meanwhile: open the page instead.
         if let text = item.url, let url = Inference.safeURL(text) { openWeb(url); status = "标签页已不在，已重新打开" }

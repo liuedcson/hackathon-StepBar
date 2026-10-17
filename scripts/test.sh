@@ -8,3 +8,8 @@ swiftc $sources Tests/StepBarTests/InferenceTests.swift Tests/StepBarTests/Advan
 .build/checks/core-tests
 swiftc $sources Tests/StepBarTests/BridgeTests.swift -o .build/checks/bridge-tests
 .build/checks/bridge-tests
+python3 Tests/StepBarTests/update-helper-test.py
+if [[ "${STEPBAR_TEST_UI:-0}" == "1" ]]; then
+  swiftc Sources/StepBar/AI.swift Sources/StepBar/Updater.swift Tests/StepBarTests/UpdateUITests.swift -o .build/checks/update-ui-tests
+  .build/checks/update-ui-tests
+fi

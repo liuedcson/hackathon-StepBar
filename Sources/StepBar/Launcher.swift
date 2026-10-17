@@ -137,7 +137,7 @@ extension Store {
         if !text.isEmpty && confident(text) { return }
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: Store.debounce)
-            guard let self, epoch == self.searchGeneration else { return }
+            guard let self, epoch == self.searchGeneration, !self.paused, self.settings.aiEnabled else { return }
             let web = self.webLookup(text)
             if let semantic { _ = await semantic.value }
             if let web {
@@ -148,7 +148,7 @@ extension Store {
                 self.webHits = WebSearch.items(found).map { var item = $0; item.layer = "联网结果"; return item }
                 self.compose()
             }
-            guard epoch == self.searchGeneration else { return }
+            guard epoch == self.searchGeneration, !self.paused, self.settings.aiEnabled else { return }
             self.understand()
         }
     }
@@ -218,12 +218,16 @@ extension Store {
 
     // MARK: Voice
     func startVoice() {
-        guard !listening, settings.voiceAvailable else { return }
+        guard !listening, launcherOpen, !paused, settings.voiceAvailable else { return }
         if !settings.isCustom && RuntimeChecks.voiceConfiguration(settings).apiKey.isEmpty { intent = "请先配置 Step Plan Key"; return }
-        listening = true; intent = "正在听…松开 ⌥ 结束"
+        listening = true; intent = "正在听…松开 ⌥M 结束"
         Task { [weak self] in
             guard let self else { return }
-            do { try await self.voice.start() }
+            do {
+                guard self.listening, self.launcherOpen, !self.paused else { return }
+                try await self.voice.start()
+            }
+            catch is CancellationError { }
             catch { self.listening = false; self.intent = error.localizedDescription }
         }
     }
@@ -231,17 +235,22 @@ extension Store {
         guard listening else { return }
         listening = false
         let pcm = voice.stop()
+        guard !pcm.isEmpty else { intent = nil; return }
         intent = "正在识别…"
         let config = RuntimeChecks.voiceConfiguration(settings), custom = settings.isCustom
+        let epoch = searchGeneration
         Task { [weak self] in
             guard let self else { return }
             do {
                 let text: String
                 if custom { text = try await VoiceInput.transcribeOpenAI(pcm, configuration: config) }
-                else { text = try await VoiceInput.transcribe(pcm, configuration: config) { partial in self.intent = "🎙 \(partial)" } }
+                else { text = try await VoiceInput.transcribe(pcm, configuration: config) { partial in
+                    if epoch == self.searchGeneration, !self.paused { self.intent = "🎙 \(partial)" }
+                } }
+                guard epoch == self.searchGeneration, !self.paused else { return }
                 self.intent = nil
                 if !text.isEmpty { self.query = text }
-            } catch { self.intent = error.localizedDescription }
+            } catch { if epoch == self.searchGeneration, !self.paused { self.intent = error.localizedDescription } }
         }
     }
 
@@ -265,6 +274,7 @@ extension Store {
         } else if let url = Inference.safeURL(text) {
             openWeb(url); status = "已打开：\(item.title)"
         } else { return }
+        guard !paused else { return }
         memory.choices[item.id, default: 0] += 1
         learn(item, query: query, rank: rank)
         save()

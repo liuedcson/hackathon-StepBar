@@ -68,6 +68,7 @@ enum WebSearch {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw AIError(message: "联网搜索返回 HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
         }
+        guard data.count <= 1_000_000 else { throw AIError(message: "联网搜索返回内容过大") }
         struct Envelope: Decodable { var results: [WebResult]? }
         return cleaned((try JSONDecoder().decode(Envelope.self, from: data)).results ?? [])
     }

@@ -12,6 +12,7 @@ import Combine
     var localMonitor: Any?
     var flagsMonitor: Any?
     var voiceTimer: Timer?
+    var voiceChordHeld = false
     var pauseWatch: AnyCancellable?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -81,15 +82,24 @@ import Combine
             }
             return event
         }
-        // Hold ⌥ alone for 0.3 s to talk; release to search with the transcript.
-        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
+        // Only an explicit hold of ⌥M inside the launcher can start recording.
+        flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown, .keyUp]) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if event.type == .keyDown { self.voiceTimer?.invalidate(); return event }
-            if flags == .option {
-                self.voiceTimer?.invalidate()
-                self.voiceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in Task { @MainActor in self.store.startVoice() } }
-            } else {
+            let flags = event.modifierFlags.intersection([.option, .command, .control, .shift])
+            if event.type == .keyDown, event.keyCode == kVK_ANSI_M, flags == .option {
+                if !self.voiceChordHeld {
+                    self.voiceChordHeld = true
+                    self.voiceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+                        Task { @MainActor in
+                            guard let self, self.voiceChordHeld, self.panel.isKeyWindow else { return }
+                            self.store.startVoice()
+                        }
+                    }
+                }
+                return nil
+            }
+            if (event.type == .keyUp && event.keyCode == kVK_ANSI_M) || flags != .option || event.type == .keyDown {
+                self.voiceChordHeld = false
                 self.voiceTimer?.invalidate()
                 if self.store.listening { self.store.stopVoice() }
             }
@@ -105,7 +115,9 @@ import Combine
         NSApp.activate(ignoringOtherApps: true); panel.makeKeyAndOrderFront(nil); store.focusRequest += 1
     }
     func closePanel() {
+        voiceChordHeld = false; voiceTimer?.invalidate()
         panel.orderOut(nil); store.searchGeneration += 1; store.launcherOpen = false
+        store.resetAI()
         if store.listening { store.listening = false; _ = store.voice.stop(); store.intent = nil }
     }
     @objc func panelResigned() { if panel.isVisible { closePanel() } }

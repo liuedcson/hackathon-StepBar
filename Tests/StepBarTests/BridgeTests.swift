@@ -45,6 +45,17 @@ import Foundation
         precondition(acknowledged == 200)
         let (afterAck, _) = try await send("/command")
         precondition(String(data: afterAck, encoding: .utf8) == "{}")
+        bridge.onAck = { ack in precondition(ack.success, "Enqueuing a second command must not fail the first") }
+        let first = bridge.jump(tab.ref)
+        let second = bridge.close([7], bundle: tab.bundle)
+        let (queued, _) = try await send("/command")
+        let queuedCommand = try JSONDecoder().decode(BrowserCommand.self, from: queued)
+        precondition(queuedCommand.id == first)
+        _ = try await send("/ack", method: "POST", body: JSONEncoder().encode(BrowserAck(id: first, success: true)))
+        let (next, _) = try await send("/command")
+        let nextCommand = try JSONDecoder().decode(BrowserCommand.self, from: next)
+        precondition(nextCommand.id == second)
+        _ = try await send("/ack", method: "POST", body: JSONEncoder().encode(BrowserAck(id: second, success: true)))
         print("PASS: loopback bridge auth, context, command routing and acknowledgement")
     }
 }

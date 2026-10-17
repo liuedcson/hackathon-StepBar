@@ -29,12 +29,12 @@ cat > "$app_path/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>NSHumanReadableCopyright</key><string>Powered by StepFun 阶跃星辰 · Step Plan</string>
 <key>CFBundleExecutable</key><string>StepBar</string>
-<key>CFBundleVersion</key><string>4</string>
-<key>CFBundleShortVersionString</key><string>0.1.3</string>
+<key>CFBundleVersion</key><string>5</string>
+<key>CFBundleShortVersionString</key><string>0.1.4</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
-<key>NSMicrophoneUsageDescription</key><string>启用语音后，按住 ⌥ 录音，仅发送给你配置的语音转写服务。</string>
+<key>NSMicrophoneUsageDescription</key><string>唤起 StepBar 后，长按 ⌥M 才录音，仅发送给你配置的语音转写服务。</string>
 </dict></plist>
 PLIST
 identity="StepBar Local Signing"
@@ -48,10 +48,5 @@ if [[ -f "$keychain" ]] && security find-certificate -c "$identity" "$keychain" 
 else
   echo "warning: '$identity' not found; ad-hoc signing resets Accessibility on every rebuild. Run ./scripts/setup-signing.sh" >&2
   codesign --force --sign - "$app_path"
-fi
-mkdir -p browser-extension
-token=$(/usr/bin/plutil -extract bridgeToken raw -o - "$HOME/Library/Application Support/StepBar/settings.json" 2>/dev/null || true)
-if [[ -n "$token" ]]; then
-  printf '{"token":"%s"}\n' "$token" > browser-extension/pairing.json
 fi
 echo "Built: $app_path"

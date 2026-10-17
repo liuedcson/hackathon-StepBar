@@ -62,8 +62,7 @@ final class BrowserBridge {
     }
     private func send(_ command: BrowserCommand) -> UUID {
         queue.async {
-            for old in self.commands { self.onAck?(BrowserAck(id: old.id, success: false)) }
-            self.commands = [command]
+            self.commands.append(command)
             self.queue.asyncAfter(deadline: .now() + 10) {
                 if self.commands.contains(where: { $0.id == command.id }) {
                     self.commands.removeAll { $0.id == command.id }

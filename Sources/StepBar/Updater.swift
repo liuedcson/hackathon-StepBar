@@ -17,11 +17,20 @@ struct ReleaseManifest: Codable {
         guard let next = parts(candidate), let previous = parts(current) else { return false }
         return previous.lexicographicallyPrecedes(next)
     }
+    static func validVersion(_ value: String) -> Bool {
+        value.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+$", options: .regularExpression) != nil
+    }
+    static func signingRequirementArgument(_ output: String) -> String? {
+        guard let line = output.split(separator: "\n").first(where: { $0.hasPrefix("designated => ") }) else { return nil }
+        let rule = String(line.dropFirst("designated => ".count))
+        guard rule.contains("certificate leaf") || rule.contains("anchor") else { return nil }
+        return "=\(rule)"
+    }
 }
 
 @MainActor final class Updater: ObservableObject {
     static let repository = "liuedcson/hackathon-StepBar"
-    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.3" }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.4" }
     static var architecture: String {
         #if arch(arm64)
         return "arm64"
@@ -41,7 +50,13 @@ struct ReleaseManifest: Codable {
     private let defaults: UserDefaults
 
     init(session: URLSession? = nil, defaults: UserDefaults = .standard, startChecks: Bool = true) {
-        self.session = session ?? AIClient(timeout: 60).session
+        if let session { self.session = session }
+        else {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest = 60
+            configuration.timeoutIntervalForResource = 600
+            self.session = URLSession(configuration: configuration, delegate: NoRedirect(), delegateQueue: nil)
+        }
         self.defaults = defaults
         automatic = (defaults.object(forKey: "StepBarAutomaticUpdates") as? Bool) ?? true
         guard startChecks else { return }
@@ -85,7 +100,7 @@ struct ReleaseManifest: Codable {
             guard !release.draft, !release.prerelease,
                   let metadata = release.assets.first(where: { $0.name == "update-\(Self.architecture).json" }) else { throw AIError(message: "Release 缺少适配本机的更新清单") }
             let manifest = try JSONDecoder().decode(ReleaseManifest.self, from: await get("releases/assets/\(metadata.id)", binary: true, limit: 16384))
-            guard release.tag_name == "v\(manifest.version)", manifest.architecture == Self.architecture,
+            guard ReleaseManifest.validVersion(manifest.version), release.tag_name == "v\(manifest.version)", manifest.architecture == Self.architecture,
                   manifest.asset == "StepBar-\(manifest.version)-\(Self.architecture).zip",
                   manifest.sha256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
                   let asset = release.assets.first(where: { $0.name == manifest.asset }), asset.size > 0, asset.size < 100_000_000 else { throw AIError(message: "更新清单无效") }
@@ -94,7 +109,7 @@ struct ReleaseManifest: Codable {
             } else { status = "当前已是最新版本 v\(Self.version)" }
         } catch { status = error.localizedDescription }
     }
-    private func run(_ executable: String, _ args: [String]) throws -> String {
+    private nonisolated static func run(_ executable: String, _ args: [String]) throws -> String {
         let process = Process(), pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: executable); process.arguments = args
         process.standardOutput = pipe; process.standardError = pipe
@@ -106,36 +121,52 @@ struct ReleaseManifest: Codable {
     func install() async {
         guard !busy, let (manifest, asset) = ready else { return }
         let current = Bundle.main.bundleURL
+        guard !current.path.contains("/AppTranslocation/") else { status = "请退出 StepBar，将应用移入「应用程序」后重新打开，再安装更新"; return }
         guard current.pathExtension == "app", current.lastPathComponent == "StepBar.app",
               FileManager.default.isWritableFile(atPath: current.deletingLastPathComponent().path),
               let helper = Bundle.main.url(forResource: "install-update", withExtension: "sh") else { status = "请将 StepBar.app 放到有写权限的应用目录"; return }
         busy = true; defer { busy = false }
         var workspace: URL?
         do {
-            status = "正在下载并验证 v\(manifest.version)…"
+            status = "正在下载 v\(manifest.version)…"
             let bytes = try await get("releases/assets/\(asset.id)", binary: true, limit: 100_000_000)
-            guard bytes.count == asset.size, SHA256.hash(data: bytes).map({ String(format: "%02x", $0) }).joined() == manifest.sha256 else { throw AIError(message: "更新包校验不一致，已拒绝安装") }
+            status = "下载完成，正在校验与准备安装…"
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("stepbar-update-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]); workspace = folder
             let archive = folder.appendingPathComponent("update.zip")
+            let bundleID = Bundle.main.bundleIdentifier
+            try await Task.detached {
+            guard bytes.count == asset.size, SHA256.hash(data: bytes).map({ String(format: "%02x", $0) }).joined() == manifest.sha256 else { throw AIError(message: "更新包校验不一致，已拒绝安装") }
             try bytes.write(to: archive)
-            let entries = try run("/usr/bin/unzip", ["-Z1", archive.path]).split(separator: "\n")
+            let entries = try Self.run("/usr/bin/unzip", ["-Z1", archive.path]).split(separator: "\n")
             guard !entries.isEmpty, entries.allSatisfy({ $0.hasPrefix("StepBar.app/") && !$0.split(separator: "/").contains("..") && !$0.contains("\\") }) else { throw AIError(message: "更新包路径不安全") }
-            let details = try run("/usr/bin/zipinfo", ["-l", archive.path])
+            let details = try Self.run("/usr/bin/zipinfo", ["-l", archive.path])
             guard !details.split(separator: "\n").contains(where: { $0.hasPrefix("l") }) else { throw AIError(message: "更新包包含符号链接，拒绝安装") }
-            _ = try run("/usr/bin/ditto", ["-x", "-k", archive.path, folder.path])
+            _ = try Self.run("/usr/bin/ditto", ["-x", "-k", archive.path, folder.path])
             let app = folder.appendingPathComponent("StepBar.app")
-            guard let bundle = Bundle(url: app), bundle.bundleIdentifier == Bundle.main.bundleIdentifier,
+            guard let bundle = Bundle(url: app), bundle.bundleIdentifier == bundleID,
                   bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == manifest.version else { throw AIError(message: "更新包身份或版本不符") }
-            _ = try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
-            let requirement = try run("/usr/bin/codesign", ["-d", "-r-", current.path]).components(separatedBy: "designated => ").last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard requirement.contains("certificate leaf") || requirement.contains("anchor") else { throw AIError(message: "当前应用未使用稳定证书签名，请手动更新") }
-            _ = try run("/usr/bin/codesign", ["--verify", "-R", requirement, app.path])
+            _ = try Self.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])
+            let signature = try Self.run("/usr/bin/codesign", ["-d", "-r-", current.path])
+            guard let requirement = ReleaseManifest.signingRequirementArgument(signature) else { throw AIError(message: "当前应用未使用稳定证书签名，请手动更新") }
+            _ = try Self.run("/usr/bin/codesign", ["--verify", "-R", requirement, app.path])
+            }.value
+            let app = folder.appendingPathComponent("StepBar.app")
+            status = "校验通过，即将退出并安装；失败详情保存在本机更新日志。"
             let copiedHelper = folder.appendingPathComponent("install-update.sh")
             try FileManager.default.copyItem(at: helper, to: copiedHelper)
             let process = Process(); process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             process.arguments = [copiedHelper.path, String(ProcessInfo.processInfo.processIdentifier), app.path, current.path, folder.path]
             try process.run()
+            for _ in 0..<100 {
+                if FileManager.default.fileExists(atPath: folder.appendingPathComponent("helper-ready").path) { break }
+                if !process.isRunning { throw AIError(message: "安装工具启动失败，原应用未退出；请查看本机 update.log") }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("helper-ready").path) else {
+                process.terminate()
+                throw AIError(message: "安装工具未就绪，已取消更新")
+            }
             NotificationCenter.default.post(name: .init("StepBarInstallUpdate"), object: nil)
         } catch {
             if let workspace { try? FileManager.default.removeItem(at: workspace) }
@@ -144,22 +175,38 @@ struct ReleaseManifest: Codable {
     }
 }
 
+@MainActor enum UpdateConfirmation {
+    static func present(window: NSWindow?, install: @escaping @MainActor () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "安装更新并重启 StepBar？"
+        alert.informativeText = "应用将自动下载、校验并安装更新。当前记忆与配置会保留；下载或验证失败不会替换当前应用。"
+        alert.addButton(withTitle: "安装")
+        alert.addButton(withTitle: "取消")
+        if let window {
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn { Task { @MainActor in install() } }
+            }
+        } else if alert.runModal() == .alertFirstButtonReturn {
+            install()
+        }
+    }
+}
+
 struct UpdateSettingsView: View {
     @ObservedObject var updater: Updater
-    @State private var confirm = false
     var body: some View {
         Section("版本与更新") {
             Text("StepBar v\(Updater.version) · \(Updater.architecture)")
             Text("从公开 GitHub Releases 获取更新，无需 Token。") .font(.caption)
             Toggle("启动时及每 6 小时自动检查更新", isOn: Binding(get: { updater.automatic }, set: { updater.save(automatic: $0) }))
             Button("检查更新") { Task { await updater.check() } }.disabled(updater.busy)
-            if let version = updater.available { Button("下载并安装 v\(version)") { confirm = true }.disabled(updater.busy) }
+            if let version = updater.available {
+                Button("下载并安装 v\(version)") {
+                    UpdateConfirmation.present(window: NSApp.keyWindow ?? NSApp.mainWindow) { Task { await updater.install() } }
+                }.disabled(updater.busy)
+            }
             Text(updater.status).font(.caption).textSelection(.enabled)
             Text("下载后验证 SHA-256、版本与相同签名身份，确认安装时退出并重启。未公证应用首次安装可能需手动放行；更新后 Chrome 扩展需要重新加载。") .font(.caption)
         }
-        .alert("安装更新并重启 StepBar？", isPresented: $confirm) {
-            Button("取消", role: .cancel) {}
-            Button("安装") { Task { await updater.install() } }
-        } message: { Text("当前记忆与配置会保留。下载或验证失败不会替换当前应用。") }
     }
 }
