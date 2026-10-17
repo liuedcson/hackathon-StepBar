@@ -28,6 +28,42 @@ extension InferenceTests {
         XCTAssertEqual(Privacy.url("https://work.example/orders/123#section"), "https://work.example/orders/123")
     }
     func testOpenAICompatibleTransport() async throws {
+        var schedule = PreparationSchedule()
+        let now = Date()
+        precondition(schedule.shouldRun(pending: 1, now: now), "Cold start must run immediately")
+        precondition(schedule.shouldRun(pending: 1, now: now), "Drain initial backlog")
+        precondition(!schedule.shouldRun(pending: 0, now: now))
+        precondition(!schedule.shouldRun(pending: 1, now: now.addingTimeInterval(60)))
+        precondition(schedule.shouldRun(pending: 10, now: now.addingTimeInterval(60)))
+        precondition(!schedule.shouldRun(pending: 0, now: now.addingTimeInterval(60)))
+        precondition(schedule.shouldRun(pending: 1, now: now.addingTimeInterval(1000)))
+        precondition(BridgeHealth.ready(enabled: true, paused: false, heartbeat: now, now: now))
+        precondition(!BridgeHealth.ready(enabled: true, paused: false, heartbeat: now, now: now.addingTimeInterval(61)))
+        precondition(!BridgeHealth.ready(enabled: false, paused: false, heartbeat: now, now: now))
+        let measured = TokenUsage.parse(["usage": ["prompt_tokens": 11, "completion_tokens": 3, "total_tokens": 14]])
+        XCTAssertEqual(measured.total, 14); XCTAssertEqual(measured.input, 11)
+        XCTAssertEqual(TokenUsage.parse([:]).unreported, 1)
+        var ledger = UsageLedger()
+        ledger.record(measured); ledger.record(measured, now: Date().addingTimeInterval(86400))
+        XCTAssertEqual(ledger.today.total, 14); XCTAssertEqual(ledger.lifetime.total, 28)
+        let oldIDs = ["a1" + String(repeating: "b2", count: 15), "b1" + String(repeating: "b2", count: 15)]
+        let newID = "c1" + String(repeating: "b2", count: 15)
+        let records = oldIDs.map { value in
+            SearchItem(id: value, kind: .history, title: "Trace explorer", subtitle: "", url: "https://trace.example/lookup?traceid=\(value)", visits: 1)
+        }
+        let routes = PatternMiner.localPatterns(records)
+        XCTAssertEqual(routes.count, 1); XCTAssertEqual(routes[0].shape, "hex32")
+        XCTAssertEqual(PatternMiner.localPatterns(Array(records.prefix(1))).count, 0)
+        var coldMemory = Memory(); coldMemory.patterns = routes
+        let cold = Layers(pool: records, memory: coldMemory, entries: [], searchPages: [])
+        let actions = cold.learnedActions("traceid \(newID)")
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(actions[0].url, "https://trace.example/lookup?traceid=\(newID)")
+        XCTAssertEqual(cold.learnedActions("orderid \(newID)").count, 0)
+        let sites = [(host: "trace.example", items: records)]
+        let mined = PatternMiner.validated(AIPatterns(patterns: [.init(template: "https://trace.example/lookup?traceid={value}", label: "Trace", param: "traceid")]), sites: sites)
+        XCTAssertEqual(mined.first?.shape, "hex32")
+        XCTAssertEqual(Understand.pending(pool: records, notes: [:], pages: [:]).count, 2)
         XCTAssertEqual(ReleaseManifest.signingRequirementArgument("Executable=/synthetic/StepBar\ndesignated => identifier \"local.stepbar.app\" and certificate leaf = H\"123\"\n"), "=identifier \"local.stepbar.app\" and certificate leaf = H\"123\"")
         XCTAssertNil(ReleaseManifest.signingRequirementArgument("designated => cdhash H\"123\""))
         try await Self.checkCancelledMicrophoneStart()
@@ -141,9 +177,9 @@ extension InferenceTests {
         let once = SearchItem(id: "u:https://c.example", kind: .history, title: "Read once", subtitle: "", url: "https://c.example", visits: 1)
         let tab = SearchItem(id: "u:https://t.example", kind: .tab, title: "Open tab", subtitle: "", url: "https://t.example")
         var notes: [String: PageNote] = [:]
-        // Tabs first, then pages visited more than once; a page seen once with no text waits.
+        // Tabs and frequent pages first; cold-start preparation includes one-off pages too.
         let pending = Understand.pending(pool: [other, step, once, tab], notes: notes, pages: [:])
-        XCTAssertEqual(pending.map(\.id), [tab.id, step.id, other.id])
+        XCTAssertEqual(pending.map(\.id), [tab.id, step.id, other.id, once.id])
         let result = AINotes(items: [.init(i: 1, purpose: "StepFun 模型 API 文档", terms: ["阶跃星辰", "阶跃", "StepFun", "模型 API", "阶跃"], asks: ["阶跃 api 文档"]), .init(i: 9, purpose: "x", terms: ["x"], asks: nil)])
         XCTAssertEqual(Understand.apply(result, to: pending, pages: [:], into: &notes), 1)
         // Title words and repeats are dropped from terms.

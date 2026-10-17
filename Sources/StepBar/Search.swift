@@ -185,7 +185,7 @@ enum Sites {
 
 enum BrowserHistory {
     // Chrome only: every profile, the last 90 days. Demo mode reads the demo Chrome's profile instead.
-    static func load(days: Int = 90, perProfile: Int = 5000) -> [SearchItem] {
+    static func load(days: Int = 90, perProfile: Int = -1) -> [SearchItem] {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let base = Demo.chrome ?? support.appendingPathComponent("Google/Chrome")
         var items: [SearchItem] = []

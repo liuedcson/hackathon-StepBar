@@ -5,6 +5,7 @@ import Foundation
 enum Study {
     static func configuration(_ settings: Settings) -> AIConfiguration {
         var config = RuntimeChecks.summaryConfiguration(settings)
+        config.maxTokens = 4096
         if !settings.isCustom { config.reasoningEffort = ProcessInfo.processInfo.environment["STEPBAR_STUDY_EFFORT"] ?? "high" }
         return config
     }

@@ -27,8 +27,17 @@ import SwiftUI
     @Published var intent: String?
     @Published var focusRequest = 0
     @Published var listening = false
-    @Published var diagnosticTab = "notes"
+    @Published var diagnosticTab = "settings"
     @Published var backgroundStatus = "后台：等待空闲"
+    @Published var historyStatus = "正在读取近 90 天 Chrome 历史…"
+    @Published var usage = UsageLedger()
+    @Published var sessionUsage = TokenUsage()
+    @Published var bridgeReady = false
+    @Published var bridgeHeartbeat = Date.distantPast
+    var preparationSchedule = PreparationSchedule()
+    var historyLoading = false
+    var allHistory: [SearchItem] = []
+    private var usageObserver: NSObjectProtocol?
     var history: [SearchItem] = []
     var searchPages: [SearchItem] = []
     var siteSearches: [Recipe] = []
@@ -74,6 +83,16 @@ import SwiftUI
         path = folder.appendingPathComponent("memory.json")
         settingsPath = folder.appendingPathComponent("settings.json")
         pagesPath = folder.appendingPathComponent("pages.json")
+        if let data = try? Data(contentsOf: folder.appendingPathComponent("usage.json")), let saved = try? JSONDecoder().decode(UsageLedger.self, from: data) { usage = saved }
+        usageObserver = NotificationCenter.default.addObserver(forName: TokenUsage.notification, object: nil, queue: .main) { [weak self] notification in
+            guard let value = notification.object as? TokenUsage else { return }
+            Task { @MainActor in
+                guard let self else { return }
+                self.sessionUsage.add(value); self.usage.record(value)
+                let snapshot = self.usage, file = folder.appendingPathComponent("usage.json")
+                Self.writer.async { try? JSONEncoder().encode(snapshot).write(to: file, options: .atomic) }
+            }
+        }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         pages = PageIndex.load(pagesPath)
         if let data = try? Data(contentsOf: path) {
@@ -98,6 +117,10 @@ import SwiftUI
         bridge.onStatus = { [weak self] message in Task { @MainActor in self?.bridgeStatus = message } }
         bridge.onAck = { [weak self] ack in Task { @MainActor in self?.acknowledgeJump(ack) } }
         bridge.onPage = { [weak self] page in Task { @MainActor in self?.receivePage(page) } }
+        bridge.onHeartbeat = { [weak self] in Task { @MainActor in
+            guard let self else { return }
+            self.bridgeHeartbeat = Date(); self.refreshBridgeHealth()
+        } }
         if settings.browserBridge { bridge.start(token: settings.bridgeToken) }
         writePairing()
         reloadHistory()
@@ -155,6 +178,7 @@ import SwiftUI
             settings = updated
             browserTabs = []; browserUpdated = .distantPast
             pendingJumps = [:]
+            bridgeHeartbeat = .distantPast; bridgeReady = false
             if settings.browserBridge { bridge.start(token: settings.bridgeToken) } else { bridge.stop(); bridgeStatus = "浏览器桥接已关闭" }
             writePairing()
             clipText = nil; copied = nil
@@ -162,6 +186,7 @@ import SwiftUI
             status = "设置已保存"
             NotificationCenter.default.post(name: .init("StepBarSettingsChanged"), object: nil)
             save()
+            preparationSchedule = PreparationSchedule(); backgroundJobs()
         } catch { status = error.localizedDescription }
     }
     var extensionFolder: URL? {
@@ -250,21 +275,31 @@ import SwiftUI
         pasteCount = NSPasteboard.general.changeCount
         if paused { results = [] }
         status = paused ? "已暂停：不读取剪贴板、不学习、不调用 AI" : "已恢复"
+        refreshBridgeHealth()
+        if !paused { backgroundJobs() }
     }
 
     // MARK: Collection
     func tick() {
+        refreshBridgeHealth()
         guard !paused else { return }
         let now = Date()
+        if now.timeIntervalSince(historyAt) >= PreparationSchedule.interval { reloadHistory() }
         if NSPasteboard.general.changeCount != pasteCount { readClipboard(now: now) }
-        if now.timeIntervalSince(jobsAt) > 60 { jobsAt = now; backgroundJobs() }
-        if pendingSave && now.timeIntervalSince(savedAt) > 5 && !launcherOpen { save() }
+        if now.timeIntervalSince(jobsAt) > 5 { jobsAt = now; backgroundJobs() }
+        if pendingSave && now.timeIntervalSince(savedAt) > 5 { save() }
     }
     func receiveBrowser(_ report: BrowserReport) {
         guard settings.browserBridge, !paused else { return }
         browserTabs = report.tabs.filter { !settings.excludes(url: $0.url) }
         browserUpdated = Date()
-        bridgeStatus = "Chrome 已连接 · \(browserTabs.count) 个标签页"
+        bridgeHeartbeat = Date(); refreshBridgeHealth()
+        var known = Set(allHistory.map(\.id))
+        for tab in browserTabs where known.insert(SearchItem.urlID(tab.url)).inserted {
+            var item = SearchItem.tab(tab); item.date = Date(); item.visits = 1
+            allHistory.append(item)
+        }
+        backgroundJobs()
         guard let active = browserTabs.first(where: { $0.active && $0.focused }), active.url != lastActiveURL else { return }
         lastActiveURL = active.url
         learn(from: active.url)
@@ -292,6 +327,14 @@ import SwiftUI
     func receivePage(_ page: PageText) {
         guard !paused, !settings.excludes(url: page.url) else { return }
         PageIndex.insert(page, into: &pages); pagesDirty = true; pendingSave = true
+        backgroundJobs()
+    }
+    func refreshBridgeHealth() {
+        bridgeReady = BridgeHealth.ready(enabled: settings.browserBridge, paused: paused, heartbeat: bridgeHeartbeat)
+        if bridgeReady { bridgeStatus = "Ready · Chrome 扩展已连接 · \(browserTabs.count) 个标签页" }
+        else if !settings.browserBridge { bridgeStatus = "未启用 Chrome 桥接" }
+        else if paused { bridgeStatus = "已暂停 · Chrome 数据采集暂停" }
+        else if bridgeHeartbeat != .distantPast { bridgeStatus = "连接已过期 · 请确认 Chrome 和扩展正在运行" }
     }
     // Any copied text is kept briefly as context; password-manager copies and secret-looking text are skipped.
     func readClipboard(now: Date) {
@@ -316,21 +359,24 @@ import SwiftUI
     }
 
     // MARK: Background understanding (step-5-preview)
-    // Page notes and URL patterns. Needs AC power, a cool Mac, 30 s without input and a closed launcher;
-    // the hotkey cancels a running job.
+    // Immediate cold start, then time/count-triggered batches, independent of power and idle state.
     func backgroundJobs() {
-        if Date().timeIntervalSince(historyAt) > 900 && !launcherOpen { reloadHistory() }
-        guard settings.aiEnabled, settings.background, !paused, !launcherOpen, jobTask == nil, !history.isEmpty else { return }
-        let gate = Gate.now()
-        guard gate.allowsAI || Demo.on && gate.idle >= 5 else {
-            backgroundStatus = "后台：暂停（\(gate.onAC ? "" : "未接电源 ")\(gate.lowPower ? "低电量模式 " : "")\(gate.cool ? "" : "温度高 ")\(gate.idle < 30 ? "正在使用" : "")）"; return
-        }
-        guard budget.allows() else { backgroundStatus = "后台：本小时额度已用 \(budget.used / 1000)k，稍后继续"; return }
+        guard settings.aiEnabled, settings.background, !paused, jobTask == nil, !allHistory.isEmpty else { return }
         let config = Study.configuration(settings)
-        let sites = Array(PatternMiner.pending(history: history + searchPages, studied: memory.studied).prefix(PatternMiner.hostsPerCall))
-        let notes = Array(Understand.pending(pool: freshTabs + history, notes: memory.notes, pages: pages).prefix(Understand.batch))
-        guard !sites.isEmpty || !notes.isEmpty else { backgroundStatus = "后台：已理解 \(memory.notes.count) 个页面、\(memory.patterns.count) 个网址模式"; return }
+        guard !config.apiKey.isEmpty, !config.modelID.isEmpty, !config.baseURL.isEmpty else {
+            backgroundStatus = "历史 AI 准备：请先保存可用的后台模型与 Key；本地查询路径不受影响"; return
+        }
+        guard Date() >= budget.retryAt else { return }
+        let sites = Array(PatternMiner.pending(history: allHistory, studied: memory.studied).prefix(PatternMiner.hostsPerCall))
+        let notes = Array(Understand.pending(pool: freshTabs + allHistory, notes: memory.notes, pages: pages).prefix(Understand.batch))
+        guard !sites.isEmpty || !notes.isEmpty else {
+            _ = preparationSchedule.shouldRun(pending: 0)
+            backgroundStatus = "后台：已理解 \(memory.notes.count) 个页面、\(memory.patterns.count) 个网址模式"; return
+        }
+        let pending = Understand.pending(pool: allHistory, notes: memory.notes, pages: pages).count + PatternMiner.pending(history: allHistory, studied: memory.studied).count
+        guard preparationSchedule.shouldRun(pending: pending) else { backgroundStatus = "后台：新增待分析 \(pending) 条 · 满 10 条或每 15 分钟处理"; return }
         let pages = self.pages, started = Date()
+        let siteCounts = Dictionary(grouping: allHistory.compactMap { $0.url.flatMap(PatternMiner.host) }, by: { $0 }).mapValues(\.count)
         jobTask = Task { [weak self] in
             do {
                 // URL patterns first: few calls, and they make whole sites reachable by parameter.
@@ -339,15 +385,17 @@ import SwiftUI
                     let found = try await Study.patterns(sites, configuration: config)
                     guard let self, !Task.isCancelled else { return }
                     let hosts = Set(sites.map(\.host))
-                    self.memory.patterns.removeAll { hosts.contains($0.host) }
+                    let foundTemplates = Set(found.map(\.template))
+                    self.memory.patterns.removeAll { hosts.contains($0.host) && foundTemplates.contains($0.template) }
                     self.memory.patterns += found
-                    for site in sites { self.memory.studied[site.host] = Studied(pages: site.items.count) }
+                    for site in sites { self.memory.studied[site.host] = Studied(pages: siteCounts[site.host] ?? site.items.count) }
                     self.budget.spent(PatternMiner.payload(sites).count * 2 / 3 + 3000)
                     self.backgroundStatus = "后台：找到 \(found.count) 个网址模式 · \(Int(Date().timeIntervalSince(started)))s"
                 } else {
                     self?.backgroundStatus = "后台：\(config.modelID) 正在理解 \(notes.count) 个页面"
                     let written = try await Study.notes(notes, pages: pages, configuration: config)
                     guard let self, !Task.isCancelled else { return }
+                    guard !written.isEmpty else { throw AIError(message: "后台未返回可用页面理解，稍后重试") }
                     self.memory.notes.merge(written) { $1 }
                     self.budget.spent(Understand.payload(notes, pages: pages).count * 2 / 3 + notes.count * 150 + 3000)
                     self.backgroundStatus = "后台：理解了 \(written.count) 个页面 · \(Int(Date().timeIntervalSince(started)))s · 共 \(self.memory.notes.count)"
@@ -363,11 +411,14 @@ import SwiftUI
             self?.jobsAt = .distantPast
         }
     }
+    var preparationProgress: String {
+        let pending = Understand.pending(pool: allHistory, notes: memory.notes, pages: pages).count
+        let understood = allHistory.filter { memory.notes[$0.id] != nil }.count
+        return "AI 页面准备 \(understood)/\(allHistory.count) · 待处理 \(pending) · 首次立即准备，新增满 10 条或每 15 分钟增量分析"
+    }
     func stopJobs() { jobTask?.cancel(); jobTask = nil }
-    // The hotkey wins: background model calls stop so the launcher gets the network and quota.
     func yieldToForeground() {
         launcherOpen = true
-        if jobTask != nil { stopJobs(); backgroundStatus = "后台：已让路给搜索" }
     }
     func testAI() {
         guard !testingAI else { return }
@@ -402,7 +453,7 @@ import SwiftUI
         memory.patterns.removeAll { excluded($0.template.replacingOccurrences(of: "{value}", with: "x")) }
         memory.notes = memory.notes.filter { !($0.key.hasPrefix("u:") && excluded(String($0.key.dropFirst(2)))) }
         let now = Date(), cutoff = now.addingTimeInterval(-Double(settings.retentionDays) * 86400)
-        if !history.isEmpty { memory.notes = Understand.prune(memory.notes, alive: Set(history.map(\.id) + freshTabs.map(\.id)), now: now) }
+        if !allHistory.isEmpty { memory.notes = Understand.prune(memory.notes, alive: Set(allHistory.map(\.id) + freshTabs.map(\.id)), now: now) }
         // Learned entries are what makes StepBar better with use: they stay until unused for 180 days.
         let stale = now.addingTimeInterval(-180 * 86400)
         memory.recipes = Array(memory.recipes.filter { $0.updated > stale }.sorted { $0.updated < $1.updated }.suffix(300))
@@ -412,7 +463,8 @@ import SwiftUI
         memory.remembered = memory.remembered.filter { wanted.contains($0.key) }
         memory.searchLog = Array(memory.searchLog.filter { $0.date > cutoff }.suffix(500))
         var pageSnapshot: [String: PageText]?
-        if pagesDirty { pageSnapshot = pages.filter { $0.value.date > cutoff && !excluded($0.value.url) }; pagesDirty = false }
+        let retainedPages = pages.filter { $0.value.date > cutoff && !excluded($0.value.url) }
+        if pagesDirty || retainedPages.count != pages.count { pages = retainedPages; pageSnapshot = retainedPages; pagesDirty = false }
         // Encoding happens off the main thread on a value copy. The serial queue keeps writes in order.
         let snapshot = memory, path = self.path, pagesPath = self.pagesPath
         pendingSave = false; savedAt = now

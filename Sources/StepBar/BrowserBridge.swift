@@ -37,6 +37,7 @@ final class BrowserBridge {
     var onStatus: ((String) -> Void)?
     var onAck: ((BrowserAck) -> Void)?
     var onPage: ((PageText) -> Void)?
+    var onHeartbeat: (() -> Void)?
     func start(token: String) {
         queue.async {
             self.listener?.cancel(); self.listener = nil; self.token = token; self.commands = []
@@ -117,6 +118,7 @@ final class BrowserBridge {
                 }
             self.onReport?(report); self.respond(connection, status: 200, data: Data("{}".utf8))
         case ("GET", "/command"):
+            if headers["x-browser-bundle"] == BrowserTab.chrome { self.onHeartbeat?() }
             self.commands.removeAll { Date().timeIntervalSince($0.date) > 10 }
             // Browser-specific polling prevents another connected browser consuming the command.
             let bundle = headers["x-browser-bundle"] ?? ""

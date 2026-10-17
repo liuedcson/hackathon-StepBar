@@ -21,14 +21,35 @@ extension Store {
     }
     func resetAI() { aiPicks = [:]; aiActions = []; aiCandidates = []; webHits = []; intent = nil; thinking = false; generating = false }
     func reloadHistory() {
+        guard !historyLoading else { return }
+        historyLoading = true
         historyAt = Date()
         let learned = memory.recipes.filter { $0.shape == "search" }, settings = self.settings
         Task.detached(priority: .userInitiated) {
             let all = BrowserHistory.load().filter { !settings.excludes(url: $0.url ?? "") }
+            let patterns = PatternMiner.localPatterns(all)
             let searches = BrowserHistory.searches(all, learned: learned)
             let (items, pages) = BrowserHistory.split(all)
-            await MainActor.run { self.history = items; self.searchPages = pages; self.siteSearches = searches; self.compose() }
+            await MainActor.run {
+                self.historyLoading = false
+                guard self.settings == settings else { self.reloadHistory(); return }
+                self.allHistory = all; self.history = items; self.searchPages = pages; self.siteSearches = searches
+                let known = Set(self.memory.patterns.map(\.template))
+                self.memory.patterns += patterns.filter { !known.contains($0.template) }
+                let alive = Set(all.map(\.id) + self.freshTabs.map(\.id))
+                self.memory.notes = self.memory.notes.filter { alive.contains($0.key) }
+                let hosts = Set(all.compactMap { $0.url.flatMap(PatternMiner.host) })
+                self.memory.studied = self.memory.studied.filter { hosts.contains($0.key) }
+                self.memory.patterns.removeAll { !hosts.contains($0.host) }
+                self.historyStatus = all.isEmpty ? "未读取到可用历史：请确认 Chrome 已使用且历史文件可访问" : "近 90 天已载入 \(all.count) 条历史，本地准备完成 · 找到 \(patterns.count) 个标识符路径"
+                self.pendingSave = true; self.compose(); self.backgroundJobs()
+            }
         }
+    }
+    func prepareHistory() {
+        preparationSchedule = PreparationSchedule()
+        historyStatus = "正在重新读取近 90 天历史并准备本地查询路径…"
+        reloadHistory()
     }
     func queryChanged() {
         searchGeneration += 1

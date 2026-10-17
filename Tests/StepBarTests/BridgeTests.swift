@@ -13,6 +13,9 @@ import Foundation
         }
         defer { bridge.stop() }
         let session = URLSession(configuration: .ephemeral)
+        let heartbeatLock = NSLock()
+        var heartbeats = 0
+        bridge.onHeartbeat = { heartbeatLock.lock(); heartbeats += 1; heartbeatLock.unlock() }
         func send(_ path: String, method: String = "GET", body: Data? = nil, authenticated: Bool = true, bundle: String = "com.google.Chrome") async throws -> (Data, Int) {
             var request = URLRequest(url: URL(string: "http://127.0.0.1:18776\(path)")!)
             request.timeoutInterval = 3; request.httpMethod = method; request.httpBody = body
@@ -57,5 +60,7 @@ import Foundation
         precondition(nextCommand.id == second)
         _ = try await send("/ack", method: "POST", body: JSONEncoder().encode(BrowserAck(id: second, success: true)))
         print("PASS: loopback bridge auth, context, command routing and acknowledgement")
+        let receivedHeartbeats = heartbeatLock.withLock { heartbeats }
+        precondition(receivedHeartbeats > 0, "Authenticated Chrome polling must signal readiness")
     }
 }

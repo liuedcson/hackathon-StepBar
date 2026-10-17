@@ -45,11 +45,14 @@ struct Layers {
         guard let text else { return [] }
         var items: [SearchItem] = []
         let values = Inference.values(in: text)
+        let hints = text.lowercased().split(whereSeparator: \.isWhitespace).map(String.init).filter { Inference.object($0) != nil && !Inference.identifier($0) }
         for value in values {
             for recipe in memory.recipes where recipe.shape != "search" && Inference.fits(recipe.shape, value) {
                 if let url = Inference.instantiate(recipe.template, value: value) { items.append(.action(title: "查询 \(value) · \(recipe.label)", url: url, note: "学到的查询入口 · \(recipe.count) 次")) }
             }
             for pattern in memory.patterns where !["search", "text", "word"].contains(pattern.shape) && Inference.fits(pattern.shape, value) {
+                let context = "\(pattern.template) \(pattern.label) \(pattern.param)".lowercased()
+                if !hints.isEmpty && !hints.contains(where: { context.contains($0) }) { continue }
                 if let url = PatternMiner.fill(pattern, value) { items.append(.action(title: "\(pattern.label) · \(value)", url: url, note: "网址模式")) }
             }
         }

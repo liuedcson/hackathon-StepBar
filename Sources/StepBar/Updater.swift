@@ -30,7 +30,7 @@ struct ReleaseManifest: Codable {
 
 @MainActor final class Updater: ObservableObject {
     static let repository = "liuedcson/hackathon-StepBar"
-    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.4" }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.5" }
     static var architecture: String {
         #if arch(arm64)
         return "arm64"

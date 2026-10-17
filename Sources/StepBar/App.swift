@@ -127,6 +127,8 @@ import Combine
         if debugWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 720), styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
             window.title = "StepBar · Step 的理解与记忆"; window.isReleasedWhenClosed = false
+            NotificationCenter.default.addObserver(self, selector: #selector(settingsResigned), name: NSWindow.didResignKeyNotification, object: window)
+            NotificationCenter.default.addObserver(self, selector: #selector(settingsResigned), name: NSApplication.didResignActiveNotification, object: NSApp)
             // Same glass as the panel: the window is clear, the glass view fills it and SwiftUI lists drop their backgrounds.
             window.titlebarAppearsTransparent = true; window.isOpaque = false; window.backgroundColor = .clear
             // Open on the current Space, including over full-screen apps; otherwise it lands on another desktop.
@@ -134,6 +136,13 @@ import Combine
             window.contentView = Self.glass(NSHostingView(rootView: DiagnosticsView(store: store).padding(.top, 22))); debugWindow = window
         }
         debugWindow?.center(); NSApp.activate(ignoringOtherApps: true); debugWindow?.makeKeyAndOrderFront(nil)
+    }
+    @objc func settingsResigned() {
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.debugWindow, window.isVisible, !window.isKeyWindow,
+                  window.attachedSheet == nil, NSApp.modalWindow == nil else { return }
+            window.orderOut(nil)
+        }
     }
     static func glass(_ content: NSView) -> NSView {
         if #available(macOS 26, *) {

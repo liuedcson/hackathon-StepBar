@@ -6,6 +6,7 @@ struct AIConfiguration {
     var apiKey: String
     var jsonMode = false
     var reasoningEffort: String?
+    var maxTokens: Int?
 }
 struct AIError: LocalizedError {
     var message: String
@@ -47,6 +48,7 @@ struct AIClient {
         if !configuration.apiKey.isEmpty { request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONSerialization.data(withJSONObject: ["model": configuration.modelID, "stream": false, "max_tokens": 1, "messages": [["role": "user", "content": "Hi"]]])
         let (data, response) = try await session.data(for: request)
+        TokenUsage.report(data)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw AIError(message: "AI 连通性检查失败；检查地址、模型和 API Key。")
         }
@@ -64,8 +66,10 @@ struct AIClient {
         var body: [String: Any] = ["model": configuration.modelID, "stream": false, "messages": [["role": "system", "content": system], ["role": "user", "content": payload]]]
         if configuration.jsonMode { body["response_format"] = ["type": "json_object"] }
         if let effort = configuration.reasoningEffort { body["reasoning_effort"] = effort }
+        if let limit = configuration.maxTokens { body["max_tokens"] = limit }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await session.data(for: request)
+        TokenUsage.report(data)
         guard let http = response as? HTTPURLResponse else { throw AIError(message: "服务返回无效响应") }
         guard (200..<300).contains(http.statusCode) else {
             // Do not expose the provider body: it can contain echoed private prompts or credentials.

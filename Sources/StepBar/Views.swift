@@ -112,6 +112,7 @@ struct SettingsView: View {
     @State private var foregroundKeyEdited = false
     @State private var searchKeyEdited = false
     @State private var voiceKeyEdited = false
+    @State private var loaded = false
     private func credential(_ value: Binding<String>, edited: Binding<Bool>) -> Binding<String> {
         Binding(get: { value.wrappedValue }, set: { value.wrappedValue = $0; edited.wrappedValue = true })
     }
@@ -169,9 +170,9 @@ struct SettingsView: View {
                         TextField("前台检索 Model ID", text: $draft.quickModelID)
                         SecureField("Step Plan API Key", text: credential($key, edited: $keyEdited))
                     }
-                    Text("后台仅在空闲且接电源时运行。官方默认：后台 step-5-preview（high），前台 step-3.7-flash（low）。语音：stepaudio-2.5-asr。")
+                    Text("首次配置完成立即分批准备；之后新增满 10 条或每 15 分钟增量分析，不要求空闲或接电。每次最多理解 10 个页面，输出上限 4096 tokens；后台请求会消耗 Token 和电量。官方默认：后台 step-5-preview（high），前台 step-3.7-flash（low）。")
                         .font(.caption)
-                    Toggle("空闲时让后台模型理解浏览过的页面和网址结构", isOn: $draft.background)
+                    Toggle("后台自动准备历史与增量理解新页面", isOn: $draft.background)
                     Toggle("唤起搜索时先联网搜索一次输入的词，作为第三层的最新信息", isOn: $draft.webSearch)
                     Text("后台向配置的后台模型发送页面信息；前台向配置的前台模型发送输入、剪贴板、候选及联网结果。搜索只发送输入的词，不含剪贴板。回忆、链接、订单号/ID 不联网。个人信息先打码，带敏感参数的网址不发送。各服务密钥独立，仅保存在本机配置或钥匙串。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -194,23 +195,43 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Chrome 扩展") {
+                    Label(store.bridgeReady ? "Ready · 扩展已连接" : "Not Ready · 扩展未就绪", systemImage: store.bridgeReady ? "checkmark.circle.fill" : "exclamationmark.circle")
+                        .foregroundStyle(store.bridgeReady ? Color.green : Color.orange)
                     Toggle("启用本机 Chrome 桥接", isOn: $draft.browserBridge)
                     Text(store.bridgeStatus).font(.caption)
+                    if store.bridgeHeartbeat != .distantPast { Text("最近心跳：\(store.bridgeHeartbeat.formatted(date: .omitted, time: .standard))").font(.caption) }
                     Text("配对码：\(draft.bridgeToken)").font(.caption.monospaced()).textSelection(.enabled)
                     Button("重新生成配对码") { draft.bridgeToken = UUID().uuidString }
                     Button("安装 Chrome 扩展（打开扩展页与文件夹）") { store.installExtension() }
                     Text("扩展上报打开的标签页、读取停留页面的正文摘录，并执行切换/关闭标签页。桥接只监听本机 127.0.0.1:17373，每个请求都要配对码。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section("Token 用量") {
+                    Text("本次运行：\(store.sessionUsage.total.formatted()) tokens · \(store.sessionUsage.requests) 次模型响应")
+                    Text("今日：\(Calendar.current.isDateInToday(store.usage.day) ? store.usage.today.total : 0) · 累计：\(store.usage.lifetime.total.formatted()) tokens")
+                    Text("累计输入 \(store.usage.lifetime.input.formatted()) · 输出 \(store.usage.lifetime.output.formatted()) · 未返回用量 \(store.usage.lifetime.unreported) 次")
+                    Text("按模型服务返回的 usage 统计，包含前台、后台与连接测试；缺失用量不当作零消耗。搜索和语音费用不在此统计内，Token 不能直接换算金额。后台按批次和单次输出上限控制，不再按小时额度阻止历史准备。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("首次使用与历史准备") {
+                    Text(store.historyStatus)
+                    Text(store.preparationProgress).font(.caption)
+                    Text(store.backgroundStatus).font(.caption)
+                    Button("重新准备 Chrome 历史") { store.prepareHistory() }
+                    Text("本地扫描近 90 天所有可读取且未排除的 Chrome 历史，先生成有至少两个不同实例支持的 ID 查询路径，不调用模型。AI 立即分批理解，之后每 15 分钟或新增满 10 条处理；移除不在历史范围中的页面理解、网站模式，正文按保留天数清理。不回访历史网页，不编造不存在的入口。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("运行信息") {
-                    Button("查看 Step 的理解与记忆") { NotificationCenter.default.post(name: .init("StepBarShowDiagnostics"), object: nil) }
+                    Button("查看已学习的记忆") { store.diagnosticTab = "memory" }
                     Text("本地数据：\(store.path.deletingLastPathComponent().path)").font(.caption).textSelection(.enabled)
                     if let path = store.settings.localConfigPath { Text("本地配置：\(path) · 编辑后重启生效").font(.caption).textSelection(.enabled) }
                     Text("StepBar v\(Updater.version) · AI 不可用时保留本地两层结果").font(.caption).foregroundStyle(.secondary)
                 }
                 UpdateSettingsView(updater: store.updater)
             }.formStyle(.grouped).scrollContentBackground(.hidden).padding()
-        }.onAppear { draft = store.settings; loadKeys() }
+        }.onAppear {
+            if !loaded { draft = store.settings; loadKeys(); loaded = true }
+        }
     }
 }
 
@@ -226,7 +247,7 @@ struct DiagnosticsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                BrandMark(size: 22); Text("StepBar · Step 的理解与记忆").font(.title2.bold()); Spacer()
+                BrandMark(size: 22); Text("StepBar").font(.title2.bold()); Spacer()
                 Button(store.paused ? "恢复" : "暂停") { store.togglePause() }
                 Button("清空记忆", role: .destructive) { confirmClear = true }
             }.padding([.horizontal, .top])
@@ -235,9 +256,13 @@ struct DiagnosticsView: View {
                 Spacer(); Text("页面理解 \(store.memory.notes.count) · 网址模式 \(store.memory.patterns.count) · 查询入口 \(store.memory.recipes.count) · 学到的选择 \(store.memory.queryChoices.count)")
             }.font(.caption).foregroundStyle(.secondary).padding(.horizontal)
             TabView(selection: $store.diagnosticTab) {
-                VStack {
+                SettingsView(store: store).tabItem { Text("设置") }.tag("settings")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
                     TextField("筛选标题、用途或关键词", text: $search).padding(10)
-                    List(notes, id: \.0) { id, note in
+                    DisclosureGroup("记住的网页（\(notes.count)）") {
+                    Text("网页用途和关键词，让你换一种说法也能找回。").font(.caption).foregroundStyle(.secondary)
+                    ForEach(notes, id: \.0) { id, note in
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(note.title).font(.headline)
@@ -248,49 +273,49 @@ struct DiagnosticsView: View {
                             }
                             Spacer(); Button("删除") { store.removeNote(id) }
                         }.padding(.vertical, 4)
-                    }.scrollContentBackground(.hidden)
-                }.tabItem { Text("页面理解") }.tag("notes")
-                List(store.memory.patterns) { pattern in
+                    }
+                    }
+                    DisclosureGroup("快捷查询（\(store.memory.patterns.count + store.memory.recipes.count)）") {
+                    Text("从历史或使用习惯学到的网址入口，填入新 ID 或关键词即可直达。").font(.caption).foregroundStyle(.secondary)
+                ForEach(store.memory.patterns) { pattern in
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("\(pattern.label) · \(pattern.host)").font(.headline)
                             Text(pattern.template).font(.caption.monospaced()).textSelection(.enabled)
-                            Text("参数：\(pattern.param) · 形状 \(pattern.shape)").font(.caption)
-                            Text("真实取值：\(pattern.examples.joined(separator: "、"))").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            Text("可查询：\(pattern.param)").font(.caption)
                         }; Spacer(); Button("删除") { store.removePattern(pattern.id) }
                     }.padding(.vertical, 4)
-                }.scrollContentBackground(.hidden).tabItem { Text("网址模式") }.tag("patterns")
-                List(store.memory.recipes) { recipe in
+                }
+                ForEach(store.memory.recipes.filter { recipe in !store.memory.patterns.contains { $0.template == recipe.template } }) { recipe in
                     HStack {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(recipe.label).font(.headline)
                             Text(recipe.template).textSelection(.enabled)
-                            Text("\(recipe.source == "search" ? "站内搜索" : "复制后打开学到") · \(recipe.shape) · \(recipe.count) 次").font(.caption).foregroundStyle(.secondary)
+                            Text("\(recipe.source == "search" ? "站内搜索" : "使用时学到") · \(recipe.count) 次").font(.caption).foregroundStyle(.secondary)
                         }; Spacer(); Button("删除") { store.removeRecipe(recipe.id) }
                     }.padding(.vertical, 4)
-                }.scrollContentBackground(.hidden).tabItem { Text("查询入口") }.tag("recipes")
-                List(store.memory.queryChoices.sorted { $0.value.values.reduce(0, +) > $1.value.values.reduce(0, +) }, id: \.key) { query, counts in
+                }
+                    }
+                    DisclosureGroup("常用选择（\(store.memory.queryChoices.count)）") {
+                    Text("记住你输入后选择的页面，下次优先推荐。").font(.caption).foregroundStyle(.secondary)
+                ForEach(store.memory.queryChoices.sorted { $0.value.values.reduce(0, +) > $1.value.values.reduce(0, +) }, id: \.key) { query, counts in
                     VStack(alignment: .leading, spacing: 3) {
                         Text("「\(query)」").font(.headline)
                         ForEach(counts.sorted { $0.value > $1.value }, id: \.key) { id, count in
                             Text("\(count) 次 → \(store.memory.remembered[id]?.title ?? String(id.dropFirst(2)))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }.padding(.vertical, 3)
-                }.scrollContentBackground(.hidden).tabItem { Text("学到的选择") }.tag("choices")
-                List(store.browserTabs, id: \.identity) { tab in
-                    VStack(alignment: .leading) {
-                        Text(tab.title).font(.headline)
-                        Text(tab.url).font(.caption).textSelection(.enabled)
-                        Text("window \(tab.windowID) / tab \(tab.id)\(tab.active && tab.focused ? " · 当前标签页" : "")").font(.caption2)
+                }
                     }
-                }.scrollContentBackground(.hidden).tabItem { Text("标签页") }.tag("tabs")
-                SettingsView(store: store).tabItem { Text("设置") }.tag("settings")
+                    }.padding()
+                }.tabItem { Text("记忆") }.tag("memory")
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(store.status)
                 Text(store.backgroundStatus).foregroundStyle(.secondary)
             }.font(.caption).padding([.horizontal, .bottom])
-        }.frame(minWidth: 960, minHeight: 640)
+        }.frame(minWidth: 800, minHeight: 600)
+            .onAppear { if !["settings", "memory"].contains(store.diagnosticTab) { store.diagnosticTab = "settings" } }
             .alert("清空全部本地记忆？", isPresented: $confirmClear) {
                 Button("取消", role: .cancel) {}
                 Button("清空", role: .destructive) { store.clear() }
