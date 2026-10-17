@@ -113,6 +113,21 @@ struct SettingsView: View {
     @State private var searchKeyEdited = false
     @State private var voiceKeyEdited = false
     @State private var loaded = false
+    private struct KeyDraft {
+        var key: String; var foreground: String; var search: String; var voice: String
+        var keyEdited: Bool; var foregroundEdited: Bool; var searchEdited: Bool; var voiceEdited: Bool
+    }
+    @State private var keyDrafts: [String: KeyDraft] = [:]
+    @State private var previousProvider = "stepPlan"
+    private func switchProvider() {
+        keyDrafts[previousProvider] = KeyDraft(key: key, foreground: foregroundKey, search: searchKey, voice: voiceKey,
+            keyEdited: keyEdited, foregroundEdited: foregroundKeyEdited, searchEdited: searchKeyEdited, voiceEdited: voiceKeyEdited)
+        previousProvider = draft.aiProvider
+        if let saved = keyDrafts[draft.aiProvider] {
+            key = saved.key; foregroundKey = saved.foreground; searchKey = saved.search; voiceKey = saved.voice
+            keyEdited = saved.keyEdited; foregroundKeyEdited = saved.foregroundEdited; searchKeyEdited = saved.searchEdited; voiceKeyEdited = saved.voiceEdited
+        } else { loadKeys() }
+    }
     private func credential(_ value: Binding<String>, edited: Binding<Bool>) -> Binding<String> {
         Binding(get: { value.wrappedValue }, set: { value.wrappedValue = $0; edited.wrappedValue = true })
     }
@@ -131,7 +146,7 @@ struct SettingsView: View {
                     Picker("配置模式", selection: $draft.aiProvider) {
                         Text("官方 · StepFun Step Plan").tag("stepPlan")
                         Text("自定义 · OpenAI 兼容协议").tag("custom")
-                    }.onChange(of: draft.aiProvider) { _ in loadKeys() }
+                    }.onChange(of: draft.aiProvider) { _ in if loaded { switchProvider() } }
                     if draft.isCustom {
                         Text("后台记忆 · 页面理解与网址模式").font(.headline)
                         TextField("后台 Base URL", text: $draft.customBackgroundURL)
@@ -214,7 +229,7 @@ struct SettingsView: View {
                 UpdateSettingsView(updater: store.updater)
             }.formStyle(.grouped).scrollContentBackground(.hidden).padding()
         }.onAppear {
-            if !loaded { draft = store.settings; loadKeys(); loaded = true }
+            if !loaded { draft = store.settings; previousProvider = draft.aiProvider; loadKeys(); loaded = true }
         }
     }
 }
@@ -244,6 +259,7 @@ struct DiagnosticsView: View {
                              Text(store.historyStatus)
                              Text(store.preparationProgress).font(.caption)
                              Text(store.backgroundStatus).font(.caption).textSelection(.enabled)
+                             if store.memory.learningPaused { Text("自动学习已停止。点击重新准备历史可恢复，已单独删除的记录仍会跳过。").font(.caption).foregroundStyle(.secondary) }
                              Button("重新准备 Chrome 历史") { store.prepareHistory() }
                              DisclosureGroup("学习说明") {
                                  Text("读取近 90 天未排除的 Chrome 历史，不回访历史网页。本地先整理查询入口，AI 分批理解页面用途；之后每 15 分钟或新增满 10 条增量分析，产生 Token 和电量消耗。学习记录可在下方管理。")

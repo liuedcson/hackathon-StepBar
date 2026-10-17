@@ -4,13 +4,18 @@ let busy = false;
 const bundle = 'com.google.Chrome';
 // build.sh / StepBar write pairing.json next to this file, so loading the folder pairs automatically.
 async function autoPair() {
-  const stored = await chrome.storage.local.get(['token', 'pairedFile']);
+  const stored = await chrome.storage.local.get(['token', 'pairedFile', 'port']);
+  const lastPort = Number(stored.port);
+  if (Number.isInteger(lastPort) && lastPort >= 17373 && lastPort <= 17393) endpoint = `http://127.0.0.1:${lastPort}`;
   const update = {};
   try {
     const file = await (await fetch(chrome.runtime.getURL('pairing.json'), { cache: 'no-store' })).json();
     if (file.token && file.token !== stored.pairedFile) { update.token = file.token; update.pairedFile = file.token; }
     const port = Number(file.port || 17373);
-    if (Number.isInteger(port) && port >= 17373 && port <= 17393) endpoint = `http://127.0.0.1:${port}`;
+    if (Number.isInteger(port) && port >= 17373 && port <= 17393) {
+      endpoint = `http://127.0.0.1:${port}`;
+      if (port !== lastPort) update.port = port;
+    }
   } catch (_) { /* Load the extension folder exported by StepBar to pair automatically. */ }
   if (Object.keys(update).length) await chrome.storage.local.set(update);
 }
@@ -25,7 +30,7 @@ async function sync() {
     const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
     const tabs = windows.filter(w => !w.incognito).flatMap(w => (w.tabs || []).filter(t => !t.incognito).map(t => ({ id: t.id, windowID: w.id, title: t.title || '', url: t.url || '', active: t.active, focused: w.focused, bundle })));
     const report = await fetch(`${endpoint}/events`, { method: 'POST', headers, body: JSON.stringify({ bundle, tabs }), signal: AbortSignal.timeout(3000) });
-    if (!report.ok) throw new Error(`Bridge HTTP ${report.status}`);
+    if (!report.ok) throw new Error(report.status === 401 ? '请在 StepBar 中重新安装扩展，并在 Chrome 中重新加载' : `连接失败（${report.status}）`);
     const response = await fetch(`${endpoint}/command`, { headers, signal: AbortSignal.timeout(3000) });
     const command = await response.json();
     if (command.id && command.bundle === bundle) {

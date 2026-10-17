@@ -81,6 +81,16 @@ import SwiftUI
     let path: URL
     let settingsPath: URL
     let pagesPath: URL
+    private var memoryWritable = true
+    private var settingsWritable = true
+    private static func preserveUnreadable(_ file: URL) -> Bool {
+        do {
+            let backup = file.appendingPathExtension("unreadable-\(UUID().uuidString)")
+            try FileManager.default.copyItem(at: file, to: backup)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup.path)
+            return true
+        } catch { return false }
+    }
 
     init() {
         let folder = Settings.folder
@@ -101,11 +111,18 @@ import SwiftUI
         pages = PageIndex.load(pagesPath)
         if let data = try? Data(contentsOf: path) {
             do { memory = try JSONDecoder().decode(Memory.self, from: data) }
-            catch { status = "记忆文件无法读取，已保留原文件。" }
+            catch { memoryWritable = Self.preserveUnreadable(path); status = memoryWritable ? "记忆文件无法读取，已保存原文件备份。" : "记忆文件无法读取，已停止写入以保留原文件。" }
+        } else if FileManager.default.fileExists(atPath: path.path) {
+            memoryWritable = false; status = "记忆文件无法访问，已停止写入以保留原文件。"
         }
-        if let data = try? Data(contentsOf: settingsPath), let saved = try? JSONDecoder().decode(Settings.self, from: data) { settings = saved }
+        if let data = try? Data(contentsOf: settingsPath) {
+            do { settings = try JSONDecoder().decode(Settings.self, from: data) }
+            catch { settingsWritable = Self.preserveUnreadable(settingsPath); status = "设置文件无法读取，已保留原文件或备份。" }
+        } else if FileManager.default.fileExists(atPath: settingsPath.path) {
+            settingsWritable = false; status = "设置文件无法访问，未覆盖原文件。"
+        }
         // Written back on every launch so migrated values replace old ones and retired fields drop out.
-        if let normalized = try? JSONEncoder().encode(settings), normalized != (try? Data(contentsOf: settingsPath)) { try? normalized.write(to: settingsPath, options: .atomic) }
+        if settingsWritable, let normalized = try? JSONEncoder().encode(settings), normalized != (try? Data(contentsOf: settingsPath)) { try? normalized.write(to: settingsPath, options: .atomic) }
         if let local = RuntimeChecks.localConfig(settings) {
             if settings.isCustom {
                 let summary = local.customSummary ?? local.summary, quick = local.customQuick ?? local.quick ?? summary
@@ -147,6 +164,7 @@ import SwiftUI
     }
     var aiDescription: String { settings.aiEnabled ? "后台理解 \(settings.backgroundModel) · 唤起 \(settings.foregroundModel)" : "模型未启用" }
     func saveSettings(_ draft: Settings, key: String, clearKey: Bool, foregroundKey: String = "", clearForegroundKey: Bool = false, searchKey: String = "", clearSearchKey: Bool = false, voiceKey: String = "", clearVoiceKey: Bool = false) {
+        guard settingsWritable else { aiStatus = "设置原文件尚未安全备份，未保存修改"; return }
         do {
             if draft.aiEnabled {
                 _ = try AIClient.endpoint(draft.backgroundURL)
@@ -167,6 +185,8 @@ import SwiftUI
             let summaryKey = clearKey ? "" : !key.isEmpty ? key.trimmingCharacters(in: .whitespacesAndNewlines) : updated.backgroundAccount == settings.backgroundAccount ? current.apiKey : Keychain.read(updated.backgroundAccount)
             let foregroundCurrent = RuntimeChecks.quickConfiguration(settings)
             let quickKey = !updated.isCustom ? summaryKey : clearForegroundKey ? "" : !foregroundKey.isEmpty ? foregroundKey.trimmingCharacters(in: .whitespacesAndNewlines) : updated.foregroundAccount == settings.foregroundAccount ? foregroundCurrent.apiKey : Keychain.read(updated.foregroundAccount)
+            let needsNewKey = (updated.backgroundAccount != settings.backgroundAccount && summaryKey.isEmpty) ||
+                (updated.isCustom && updated.foregroundAccount != settings.foregroundAccount && quickKey.isEmpty)
             if let path = updated.localConfigPath {
                 var input = RuntimeChecks.localConfig(settings) ?? ConfigurationInput(summary: .init(baseURL: Settings.stepPlan, modelID: "step-5-preview", apiKey: ""))
                 let summary = ConfigurationInput.Summary(baseURL: updated.backgroundURL, modelID: updated.backgroundModel, apiKey: summaryKey)
@@ -199,6 +219,7 @@ import SwiftUI
             clipText = nil; copied = nil
             refreshModelLabels()
             status = "设置已保存"
+            aiStatus = needsNewKey ? "设置已保存，新服务地址需填写 Key；旧服务的 Key 保留" : "设置已保存"
             NotificationCenter.default.post(name: .init("StepBarSettingsChanged"), object: nil)
             save()
             preparationSchedule = PreparationSchedule(); backgroundJobs()
@@ -390,22 +411,22 @@ import SwiftUI
     // MARK: Background understanding (step-5-preview)
     // Immediate cold start, then time/count-triggered batches, independent of power and idle state.
     func backgroundJobs() {
-        guard settings.aiEnabled, settings.background, !paused, jobTask == nil, !allHistory.isEmpty else { return }
+        guard settings.aiEnabled, settings.background, !memory.learningPaused, !paused, jobTask == nil, !allHistory.isEmpty else { return }
         let config = Study.configuration(settings)
         guard !config.apiKey.isEmpty, !config.modelID.isEmpty, !config.baseURL.isEmpty else {
             backgroundStatus = "历史 AI 准备：请先保存可用的后台模型与 Key；本地查询路径不受影响"; return
         }
         guard Date() >= budget.retryAt else { return }
         let sites = Array(PatternMiner.pending(history: allHistory, studied: memory.studied).prefix(PatternMiner.hostsPerCall))
-        let notes = Array(Understand.pending(pool: freshTabs + allHistory, notes: memory.notes, pages: pages).prefix(Understand.batch))
+        let notes = Array(Understand.pending(pool: freshTabs + allHistory, notes: memory.notes, pages: pages).filter { !memory.deletedNotes.contains($0.id) }.prefix(Understand.batch))
         guard !sites.isEmpty || !notes.isEmpty else {
             _ = preparationSchedule.shouldRun(pending: 0)
             backgroundStatus = "后台：已理解 \(memory.notes.count) 个页面、\(memory.patterns.count) 个网址模式"; return
         }
-        let pending = Understand.pending(pool: allHistory, notes: memory.notes, pages: pages).count + PatternMiner.pending(history: allHistory, studied: memory.studied).count
+        let pending = Understand.pending(pool: allHistory, notes: memory.notes, pages: pages).filter { !memory.deletedNotes.contains($0.id) }.count + PatternMiner.pending(history: allHistory, studied: memory.studied).count
         guard preparationSchedule.shouldRun(pending: pending) else { backgroundStatus = "后台：新增待分析 \(pending) 条 · 满 10 条或每 15 分钟处理"; return }
         let pages = self.pages, started = Date()
-        let siteCounts = Dictionary(grouping: allHistory.compactMap { $0.url.flatMap(PatternMiner.host) }, by: { $0 }).mapValues(\.count)
+        let siteCounts = Dictionary(grouping: allHistory.filter { !Clean.blocked($0.url) }.compactMap { $0.url.flatMap(PatternMiner.host) }, by: { $0 }).mapValues(\.count)
         jobTask = Task { [weak self] in
             do {
                 // URL patterns first: few calls, and they make whole sites reachable by parameter.
@@ -416,7 +437,7 @@ import SwiftUI
                     let hosts = Set(sites.map(\.host))
                     let foundTemplates = Set(found.map(\.template))
                     self.memory.patterns.removeAll { hosts.contains($0.host) && foundTemplates.contains($0.template) }
-                    self.memory.patterns += found
+                    self.memory.patterns += found.filter { !self.memory.deletedPatterns.contains($0.template) }
                     for site in sites { self.memory.studied[site.host] = Studied(pages: siteCounts[site.host] ?? site.items.count) }
                     self.budget.spent(PatternMiner.payload(sites).count * 2 / 3 + 3000)
                     self.backgroundStatus = "后台：找到 \(found.count) 个网址模式 · \(Int(Date().timeIntervalSince(started)))s"
@@ -425,7 +446,7 @@ import SwiftUI
                     let written = try await Study.notes(notes, pages: pages, configuration: config)
                     guard let self, !Task.isCancelled else { return }
                     guard !written.isEmpty else { throw AIError(message: "后台未返回可用页面理解，稍后重试") }
-                    self.memory.notes.merge(written) { $1 }
+                    self.memory.notes.merge(written.filter { !self.memory.deletedNotes.contains($0.key) }) { $1 }
                     self.budget.spent(Understand.payload(notes, pages: pages).count * 2 / 3 + notes.count * 150 + 3000)
                     self.backgroundStatus = "后台：理解了 \(written.count) 个页面 · \(Int(Date().timeIntervalSince(started)))s · 共 \(self.memory.notes.count)"
                 }
@@ -441,7 +462,7 @@ import SwiftUI
         }
     }
     var preparationProgress: String {
-        let pending = Understand.pending(pool: allHistory, notes: memory.notes, pages: pages).count
+        let pending = Understand.pending(pool: allHistory, notes: memory.notes, pages: pages).filter { !memory.deletedNotes.contains($0.id) }.count
         let understood = allHistory.filter { memory.notes[$0.id] != nil }.count
         return "AI 页面准备 \(understood)/\(allHistory.count) · 待处理 \(pending) · 首次立即准备，新增满 10 条或每 15 分钟增量分析"
     }
@@ -477,6 +498,7 @@ import SwiftUI
         if let text = item.url, let url = Inference.safeURL(text) { openWeb(url); status = "标签页已不在，已重新打开" }
     }
     func save() {
+        guard memoryWritable else { pendingSave = false; status = "记忆原文件尚未安全备份，未覆盖"; return }
         let excluded = settings.excludes
         memory.recipes.removeAll { excluded($0.template.replacingOccurrences(of: "{value}", with: "x")) }
         memory.patterns.removeAll { excluded($0.template.replacingOccurrences(of: "{value}", with: "x")) }
@@ -505,14 +527,17 @@ import SwiftUI
     }
     static let writer = DispatchQueue(label: "stepbar.save", qos: .utility)
     func clear() {
+        let deletedNotes = memory.deletedNotes, deletedPatterns = memory.deletedPatterns
         stopJobs(); pendingJumps = [:]; memory = Memory(); results = []; pages = [:]; pagesDirty = true; clipText = nil; copied = nil
+        memory.deletedNotes = deletedNotes; memory.deletedPatterns = deletedPatterns
+        memory.learningPaused = true; preparationSchedule = PreparationSchedule()
         save(); status = "本地记忆已清空"
     }
     func removeRecipe(_ id: UUID) { memory.recipes.removeAll { $0.id == id }; save() }
     func removePattern(_ id: UUID) {
-        if let host = memory.patterns.first(where: { $0.id == id })?.host { memory.studied[host] = Studied(pages: Int.max / 4) }
+        if let pattern = memory.patterns.first(where: { $0.id == id }) { memory.deletedPatterns.insert(pattern.template) }
         memory.patterns.removeAll { $0.id == id }; save()
     }
-    func removeNote(_ id: String) { memory.notes[id] = nil; save() }
+    func removeNote(_ id: String) { memory.deletedNotes.insert(id); memory.notes[id] = nil; save() }
     func resetAfterWake() { stopJobs(); clipText = nil; copied = nil }
 }

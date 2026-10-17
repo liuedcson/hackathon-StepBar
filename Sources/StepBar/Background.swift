@@ -2,8 +2,7 @@ import Foundation
 import CoreGraphics
 import IOKit.ps
 
-// When background work may run: the user isn't searching, the Mac isn't hot or saving power,
-// and AI jobs only run on AC power. Measured APIs need no extra permission.
+// Legacy CLI diagnostics only; the application's preparation schedule does not use this gate.
 struct Gate {
     var idle: Double
     var onAC: Bool
@@ -22,7 +21,7 @@ struct Gate {
     var description: String { "idle \(Int(idle))s · \(onAC ? "AC" : "battery") · lowPower \(lowPower) · thermal \(thermal.rawValue) · AI \(allowsAI ? "allowed" : "blocked")" }
 }
 
-// Background AI spending: an hourly token budget and exponential backoff after failures.
+// Failure backoff and legacy CLI budget diagnostics; the app does not enforce an hourly quota.
 struct Budget {
     var hourly = 120_000
     var window = Date()

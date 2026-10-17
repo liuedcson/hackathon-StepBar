@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 final class MockProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (Int, Data))?
@@ -18,6 +19,23 @@ final class MockProtocol: URLProtocol {
 }
 extension InferenceTests {
     func testEndpointAndPrivacy() throws {
+        let credentialQuery = Keychain.query("synthetic-account", service: "synthetic-service")
+        XCTAssertEqual(credentialQuery[kSecUseAuthenticationUI as String] as? String, kSecUseAuthenticationUIFail as String)
+        for host in ["localhost.", "127.0.0.1", "10.1.2.3", "192.168.1.2", "172.16.1.2", "169.254.1.1", "[::1]", "[::ffff:127.0.0.1]", "100.64.0.1"] {
+            precondition(!Assistant.publicActionHost(host))
+        }
+        precondition(Assistant.publicActionHost("docs.example.com"))
+        let partial = TokenUsage.parse(["usage": ["prompt_tokens": 5]])
+        precondition(partial.input == 5 && partial.total == 5 && partial.unreported == 1)
+        var suppressed = Memory(); suppressed.learningPaused = true; suppressed.deletedNotes.insert("synthetic-page")
+        let restored = try JSONDecoder().decode(Memory.self, from: JSONEncoder().encode(suppressed))
+        precondition(restored.learningPaused && restored.deletedNotes.contains("synthetic-page"))
+        for secret in [#"{"api_key":"synthetic-private-value"}"#, #"{"password": "synthetic password with spaces"}"#, #"{"access_token":"synthetic-token-value"}"#] {
+            precondition(Privacy.secrets(secret) != secret && !Privacy.secrets(secret).contains("synthetic"))
+        }
+        let original = SearchItem.action(title: "old", url: "https://example.com", note: "same")
+        var renamed = original; renamed.title = "new"
+        precondition(original != renamed)
         XCTAssertEqual(try AIClient.endpoint("https://provider.example/v1/").absoluteString, "https://provider.example/v1/chat/completions")
         XCTAssertEqual(try AIClient.endpoint("http://127.0.0.1:8080/v1/chat/completions").absoluteString, "http://127.0.0.1:8080/v1/chat/completions")
         for invalid in ["http://provider.example/v1", "https://key@provider.example/v1", "https://provider.example/v1?key=abc"] {

@@ -15,9 +15,12 @@ struct TokenUsage: Codable, Equatable {
         guard let usage = json["usage"] as? [String: Any] else { return TokenUsage(requests: 1, unreported: 1) }
         let input = (usage["prompt_tokens"] as? Int) ?? (usage["input_tokens"] as? Int)
         let output = (usage["completion_tokens"] as? Int) ?? (usage["output_tokens"] as? Int)
-        let total = (usage["total_tokens"] as? Int) ?? input.flatMap { i in output.map { i + $0 } }
-        guard let total, total >= 0 else { return TokenUsage(requests: 1, unreported: 1) }
-        return TokenUsage(input: max(0, input ?? 0), output: max(0, output ?? 0), total: total, requests: 1)
+        let reportedTotal = usage["total_tokens"] as? Int
+        guard input != nil || output != nil || reportedTotal != nil else { return TokenUsage(requests: 1, unreported: 1) }
+        let knownInput = max(0, input ?? 0), knownOutput = max(0, output ?? 0)
+        let total = max(knownInput + knownOutput, max(0, reportedTotal ?? 0))
+        let incomplete = input == nil || output == nil || (input ?? 0) < 0 || (output ?? 0) < 0 || (reportedTotal ?? 0) < 0
+        return TokenUsage(input: knownInput, output: knownOutput, total: total, requests: 1, unreported: incomplete ? 1 : 0)
     }
     static func report(_ data: Data) {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]

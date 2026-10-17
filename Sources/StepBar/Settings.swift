@@ -28,7 +28,7 @@ struct Settings: Codable, Equatable {
     var customVoiceURL = ""
     var customVoiceModel = ""
     var jsonMode = false
-    // Let the background model study pages and URL patterns while the Mac is idle on power.
+    // Prepare immediately, then incrementally by time or newly observed page count.
     var background = true
     // Search the web with the typed words before layer 3 (StepFun web search, same key).
     var webSearch = true
@@ -93,8 +93,23 @@ struct Settings: Codable, Equatable {
 
 enum Keychain {
     private static let service = "local.stepbar.ai"
+    // These keys live in the legacy (file-based) keychain. Its ACL prompt is NOT governed by
+    // kSecUseAuthenticationUI / LAContext.interactionNotAllowed: Apple documents those as
+    // Data-Protection-keychain only, and legacy items "still activate UI if needed". The only
+    // process-wide lever for legacy items is SecKeychainSetUserInteractionAllowed, so all
+    // keychain work is serialized here and reads disable interaction around the call.
+    private static let lock = NSLock()
+    private static func serialized<T>(_ body: () throws -> T) rethrows -> T { lock.lock(); defer { lock.unlock() }; return try body() }
     static func query(_ account: String, service: String = service) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account,
+         kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail]
+    }
+    // The option to strip before a write: a stored item's ACL is a query-independent thing, and
+    // suppression here would stop the one explicit "Always Allow" a stale item needs.
+    static func writeQuery(_ account: String, service: String = service) -> [String: Any] {
+        var q = query(account, service: service)
+        q.removeValue(forKey: kSecUseAuthenticationUI as String)
+        return q
     }
     static func read(_ account: String) -> String {
         read(account, service: service)
@@ -103,41 +118,61 @@ enum Keychain {
         var q = query(account, service: service)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
-        // Never interrupt launch, settings rendering or background work with an authorization dialog.
+        // Kept for the eventual move to the Data Protection keychain; for legacy items this
+        // alone does nothing, so the legacy interaction flag below does the real work.
         let context = LAContext()
         context.interactionNotAllowed = true
         q[kSecUseAuthenticationContext as String] = context
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return "" }
-        return String(data: data, encoding: .utf8) ?? ""
+        // Never interrupt launch, settings rendering or background study with an ACL dialog:
+        // a poisoned/unauthorized item then reads as "" instead of prompting on every tick.
+        return serialized {
+            var previous = DarwinBoolean(true)
+            guard SecKeychainGetUserInteractionAllowed(&previous) == errSecSuccess,
+                  SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else { return "" }
+            defer { _ = SecKeychainSetUserInteractionAllowed(previous.boolValue) }
+            var item: CFTypeRef?
+            guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let data = item as? Data else { return "" }
+            return String(data: data, encoding: .utf8) ?? ""
+        }
     }
     static func write(_ key: String, account: String) throws {
-        let q = query(account)
-        if key.isEmpty {
-            let result = SecItemDelete(q as CFDictionary)
-            guard result == errSecSuccess || result == errSecItemNotFound else { throw KeyError(status: result) }
-            return
+        // Translocation changes the path, not necessarily the signing requirement.
+        // Explicit saves may request access once; never reject a stable signed app for its path.
+        // Kept interactive (no suppression): the first save against an item created by another
+        // identity can show one "Always Allow", after which the stable signature stays silent.
+        try serialized {
+            let q = writeQuery(account)
+            if key.isEmpty {
+                let result = SecItemDelete(q as CFDictionary)
+                guard result == errSecSuccess || result == errSecItemNotFound else { throw KeyError(status: result) }
+                return
+            }
+            let values = [kSecValueData as String: Data(key.utf8)]
+            let result = SecItemUpdate(q as CFDictionary, values as CFDictionary)
+            if result == errSecItemNotFound {
+                var insert = q
+                insert[kSecValueData as String] = Data(key.utf8)
+                insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+                let added = SecItemAdd(insert as CFDictionary, nil)
+                guard added == errSecSuccess else { throw KeyError(status: added) }
+            } else if result != errSecSuccess { throw KeyError(status: result) }
         }
-        let values = [kSecValueData as String: Data(key.utf8)]
-        let result = SecItemUpdate(q as CFDictionary, values as CFDictionary)
-        if result == errSecItemNotFound {
-            var insert = q
-            insert[kSecValueData as String] = Data(key.utf8)
-            insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-            let added = SecItemAdd(insert as CFDictionary, nil)
-            guard added == errSecSuccess else { throw KeyError(status: added) }
-        } else if result != errSecSuccess { throw KeyError(status: result) }
     }
     struct KeyError: LocalizedError {
         var status: OSStatus
-        var errorDescription: String? { "钥匙串保存失败（\(status)）" }
+        var errorDescription: String? {
+            if status == errSecInteractionNotAllowed || status == errSecAuthFailed {
+                return "无法访问已保存的 Key，原 Key 未改动。请在钥匙串访问中检查 StepBar 的访问权限。"
+            }
+            return "钥匙串保存失败（\(status)）"
+        }
     }
 }
 
 enum Privacy {
     static func text(_ value: String) -> String { String(personal(secrets(value)).prefix(512)) }
     static func secrets(_ value: String) -> String {
-        let pattern = "(?i)((?:sk|ak)-[a-z0-9_-]{12,}|bearer\\s+[a-z0-9._-]{10,}|(?:password|passwd|secret|api[_-]?key|access[_-]?token)\\s*[:=]\\s*[^\\s&]+)"
+        let pattern = #"(?i)((?:sk|ak)-[a-z0-9_-]{12,}|bearer\s+[a-z0-9._-]{10,}|(?:password|passwd|secret|api[_-]?key|access[_-]?token)["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s&,}]+))"#
         return value.replacingOccurrences(of: pattern, with: "[已过滤]", options: .regularExpression)
     }
     // Phone numbers, e-mail addresses and ID card numbers become placeholders: the model still knows one was there.

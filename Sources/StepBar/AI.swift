@@ -10,6 +10,7 @@ struct AIConfiguration {
 }
 struct AIError: LocalizedError {
     var message: String
+    var truncated = false
     var errorDescription: String? { message }
 }
 final class NoRedirect: NSObject, URLSessionTaskDelegate {
@@ -78,6 +79,9 @@ struct AIClient {
         guard data.count <= 1_000_000 else { throw AIError(message: "AI 返回内容过大") }
         do {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw AIError(message: "AI 返回无效 JSON") }
+            if let choices = json["choices"] as? [[String: Any]], choices.first?["finish_reason"] as? String == "length" {
+                throw AIError(message: "AI 输出达到上限，未采纳不完整结果", truncated: true)
+            }
             guard let choices = json["choices"] as? [[String: Any]], let first = choices.first,
                   first["finish_reason"] as? String != "length",
                   let message = first["message"] as? [String: Any], let content = message["content"] as? String else { throw AIError(message: "AI 响应缺少完整 choices[0].message.content") }

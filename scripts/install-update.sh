@@ -11,6 +11,7 @@ mkdir -p "${log:h}" || exit 1
 exec >>"$log" 2>&1
 echo "$(date -u) Preparing update"
 backup="${target}.update-backup-$$"
+incoming="${target}.update-incoming-$$"
 finished=0
 restore() {
   if [[ "$finished" != 1 ]]; then
@@ -23,6 +24,7 @@ restore() {
       [[ ! -d "$target" ]] || /usr/bin/open "$target"
     fi
     rm -rf "$workspace"
+    rm -rf "$incoming"
   fi
 }
 trap restore EXIT
@@ -36,9 +38,12 @@ if kill -0 "$pid" 2>/dev/null || /bin/ps -axo comm= | /usr/bin/grep -Fxq "$targe
   echo "Application still running; update cancelled"
   exit 1
 fi
-[[ ! -e "$backup" ]] || exit 1
+[[ ! -e "$backup" && ! -e "$incoming" ]] || exit 1
+# Keep the old application intact during the slow copy and signature verification.
+/usr/bin/ditto "$source_app" "$incoming" || exit 1
+/usr/bin/codesign --verify --deep --strict "$incoming" || exit 1
 mv "$target" "$backup" || exit 1
-if /usr/bin/ditto "$source_app" "$target" && /usr/bin/codesign --verify --deep --strict "$target"; then
+if mv "$incoming" "$target"; then
   /usr/bin/open "$target" || exit 1
   finished=1
   echo "Update installed and launch requested"

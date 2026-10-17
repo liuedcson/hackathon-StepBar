@@ -30,7 +30,7 @@ struct ReleaseManifest: Codable {
 
 @MainActor final class Updater: ObservableObject {
     static let repository = "liuedcson/hackathon-StepBar"
-    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.7" }
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.8" }
     static var architecture: String {
         #if arch(arm64)
         return "arm64"
@@ -94,7 +94,7 @@ struct ReleaseManifest: Codable {
     func check() async {
         guard !busy else { return }
         busy = true; defer { busy = false }
-        ready = nil; available = nil; status = "正在检查 GitHub Release…"
+        status = "正在检查更新…"
         do {
             let release = try JSONDecoder().decode(Release.self, from: await get("releases/latest", limit: 1_000_000))
             guard !release.draft, !release.prerelease,
@@ -106,7 +106,7 @@ struct ReleaseManifest: Codable {
                   let asset = release.assets.first(where: { $0.name == manifest.asset }), asset.size > 0, asset.size < 100_000_000 else { throw AIError(message: "更新清单无效") }
             if ReleaseManifest.newer(manifest.version, than: Self.version) {
                 ready = (manifest, asset); available = manifest.version; status = "发现 v\(manifest.version)，确认后下载并安装"
-            } else { status = "当前已是最新版本 v\(Self.version)" }
+            } else { ready = nil; available = nil; status = "当前已是最新版本 v\(Self.version)" }
         } catch { status = error.localizedDescription }
     }
     private nonisolated static func run(_ executable: String, _ args: [String]) throws -> String {

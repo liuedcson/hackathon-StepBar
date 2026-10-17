@@ -48,6 +48,7 @@ enum Assistant {
         return parts.joined(separator: " | ")
     }
     static func payload(query: String, current: BrowserTab?, clipboard: String?, candidates: [SearchItem], recipes: [Recipe], searches: [Recipe], patterns: [Pattern]) -> String {
+        let query = Privacy.text(query)
         struct Candidate: Encodable { var id: String; var text: String }
         struct Entry: Encodable { var label: String; var template: String; var values: [String] }
         struct Search: Encodable { var label: String; var template: String }
@@ -91,8 +92,25 @@ enum Assistant {
         result.actions.prefix(3).compactMap { action in
             let title = Privacy.text(action.title).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty, let clean = Privacy.url(action.url), let url = Inference.safeURL(clean), let host = url.host?.lowercased(),
-                  host != "localhost", !host.hasPrefix("127."), !host.hasPrefix("0."), !host.hasSuffix(".local") else { return nil }
+                   publicActionHost(host) else { return nil }
             return SearchItem.action(title: String(title.prefix(80)), url: clean, note: "✦ Step 生成")
         }
+    }
+    static func publicActionHost(_ host: String) -> Bool {
+        let host = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        // Generated actions have no evidence for private network destinations. Existing
+        // history and learned templates remain usable; only speculative actions are filtered.
+        guard host.contains("."), !host.hasSuffix("."), !host.contains(":"),
+              host != "localhost", !host.hasSuffix(".localhost"), !host.hasSuffix(".local") else { return false }
+        if host.split(separator: ".").allSatisfy({ Int($0) != nil || $0.hasPrefix("0x") }) { return false }
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        if parts.count == 4 {
+            guard parts.allSatisfy({ (0...255).contains($0) }) else { return false }
+            return !(parts[0] == 0 || parts[0] == 10 || parts[0] == 127 || parts[0] >= 224 ||
+                     (parts[0] == 169 && parts[1] == 254) || (parts[0] == 192 && parts[1] == 168) ||
+                     (parts[0] == 172 && (16...31).contains(parts[1])) ||
+                     (parts[0] == 100 && (64...127).contains(parts[1])))
+        }
+        return true
     }
 }

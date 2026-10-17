@@ -48,8 +48,11 @@ struct Memory: Codable {
     var notes: [String: PageNote] = [:]
     var patterns: [Pattern] = []
     var studied: [String: Studied] = [:]
+    var learningPaused = false
+    var deletedNotes: Set<String> = []
+    var deletedPatterns: Set<String> = []
     init() {}
-    enum CodingKeys: String, CodingKey { case recipes, choices, queryChoices, remembered, searchLog, notes, patterns, studied }
+    enum CodingKeys: String, CodingKey { case recipes, choices, queryChoices, remembered, searchLog, notes, patterns, studied, learningPaused, deletedNotes, deletedPatterns }
     // Unknown fields of older versions are dropped on the next save.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -61,6 +64,9 @@ struct Memory: Codable {
         notes = try c.decodeIfPresent([String: PageNote].self, forKey: .notes) ?? [:]
         patterns = try c.decodeIfPresent([Pattern].self, forKey: .patterns) ?? []
         studied = try c.decodeIfPresent([String: Studied].self, forKey: .studied) ?? [:]
+        learningPaused = try c.decodeIfPresent(Bool.self, forKey: .learningPaused) ?? false
+        deletedNotes = try c.decodeIfPresent(Set<String>.self, forKey: .deletedNotes) ?? []
+        deletedPatterns = try c.decodeIfPresent(Set<String>.self, forKey: .deletedPatterns) ?? []
     }
 }
 struct Studied: Codable, Equatable {

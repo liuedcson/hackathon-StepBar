@@ -15,16 +15,17 @@ extension Store {
     func prepareLauncher() {
         searchGeneration += 1
         resetAI(); semanticHits = []; selection = 0
-        if Date().timeIntervalSince(historyAt) > 60 { reloadHistory() }
+        if !paused && Date().timeIntervalSince(historyAt) > 60 { reloadHistory() }
         compose()
         if clipboardActionable { scheduleAI() }
     }
     func resetAI() { aiPicks = [:]; aiActions = []; aiCandidates = []; webHits = []; intent = nil; thinking = false; generating = false }
     func reloadHistory() {
-        guard !historyLoading else { return }
+        guard !paused, !historyLoading else { return }
         historyLoading = true
         historyAt = Date()
         let learned = memory.recipes.filter { $0.shape == "search" }, settings = self.settings
+        let existing = Set(allHistory.map(\.id))
         Task.detached(priority: .userInitiated) {
             let all = BrowserHistory.load().filter { !settings.excludes(url: $0.url ?? "") }
             let patterns = PatternMiner.localPatterns(all)
@@ -32,13 +33,20 @@ extension Store {
             let (items, pages) = BrowserHistory.split(all)
             await MainActor.run {
                 self.historyLoading = false
+                guard !self.paused else { return }
                 guard self.settings == settings else { self.reloadHistory(); return }
-                self.allHistory = all; self.history = items; self.searchPages = pages; self.siteSearches = searches
+                guard !all.isEmpty else {
+                    self.historyStatus = "未读取到可用历史，已保留现有记忆。请检查 Chrome 历史访问权限。"
+                    return
+                }
+                let loaded = Set(all.map(\.id))
+                let incremental = self.allHistory.filter { !existing.contains($0.id) && !loaded.contains($0.id) }
+                self.allHistory = all + incremental; self.history = items; self.searchPages = pages; self.siteSearches = searches
                 let known = Set(self.memory.patterns.map(\.template))
-                self.memory.patterns += patterns.filter { !known.contains($0.template) }
-                let alive = Set(all.map(\.id) + self.freshTabs.map(\.id))
-                self.memory.notes = self.memory.notes.filter { alive.contains($0.key) }
-                let hosts = Set(all.compactMap { $0.url.flatMap(PatternMiner.host) })
+                if !self.memory.learningPaused { self.memory.patterns += patterns.filter { !known.contains($0.template) && !self.memory.deletedPatterns.contains($0.template) } }
+                let alive = Set(self.allHistory.map(\.id) + self.freshTabs.map(\.id))
+                self.memory.notes = Understand.prune(self.memory.notes, alive: alive)
+                let hosts = Set(self.allHistory.compactMap { $0.url.flatMap(PatternMiner.host) })
                 self.memory.studied = self.memory.studied.filter { hosts.contains($0.key) }
                 self.memory.patterns.removeAll { !hosts.contains($0.host) }
                 self.historyStatus = all.isEmpty ? "未读取到可用历史：请确认 Chrome 已使用且历史文件可访问" : "近 90 天已载入 \(all.count) 条历史，本地准备完成 · 找到 \(patterns.count) 个标识符路径"
@@ -47,6 +55,8 @@ extension Store {
         }
     }
     func prepareHistory() {
+        guard !paused else { historyStatus = "请先恢复 StepBar 再准备历史"; return }
+        memory.learningPaused = false
         preparationSchedule = PreparationSchedule()
         historyStatus = "正在重新读取近 90 天历史并准备本地查询路径…"
         reloadHistory()
@@ -318,6 +328,7 @@ extension Store {
     // second time on without asking the model. Generated pages are remembered too, so they need no model call again.
     private func learn(_ item: SearchItem, query: String, rank: Int) {
         guard !query.isEmpty else { return }
+        guard Privacy.secrets(query) == query, Privacy.personal(query) == query else { return }
         let key = Semantic.normalize(query)
         if key.count <= 60 {
             memory.queryChoices[key, default: [:]][item.id, default: 0] += 1

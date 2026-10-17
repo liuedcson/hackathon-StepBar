@@ -25,7 +25,12 @@ struct SearchItem: Identifiable, Equatable {
     // Which launcher layer found it (历史匹配 / 语义匹配), told to the model.
     var layer = ""
 
-    static func == (a: SearchItem, b: SearchItem) -> Bool { a.id == b.id && a.section == b.section && a.note == b.note && a.score == b.score }
+    static func == (a: SearchItem, b: SearchItem) -> Bool {
+        a.id == b.id && a.section == b.section && a.note == b.note && a.score == b.score &&
+        a.title == b.title && a.subtitle == b.subtitle && a.url == b.url &&
+        a.kind == b.kind && a.tab == b.tab && a.command == b.command && a.content == b.content &&
+        a.aliases == b.aliases && a.keywords == b.keywords && a.purpose == b.purpose && a.layer == b.layer
+    }
     // Some sites embed zero-width characters in page titles.
     static func clean(_ text: String) -> String {
         String(text.unicodeScalars.filter { !(0x200B...0x200F).contains($0.value) && !(0x202A...0x202E).contains($0.value) && !(0x2060...0x2064).contains($0.value) && $0.value != 0xFEFF })
